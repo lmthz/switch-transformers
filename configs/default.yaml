@@ -1,0 +1,33 @@
+run:
+  name: debug_a1
+  out_dir: runs
+  seed: 0
+  device: auto
+  resume: false
+
+data:
+  data_dir: generated_data
+  dataset: A1_ar2_coeffs_easy
+  context_len: 64
+  val_frac: 0.30
+
+transformer:
+  steps: 1000
+  batch_size: 128
+  lr: 3e-4
+  grad_clip: 1.0
+  log_every: 50
+  eval_every: 50
+  save_every: 200
+
+  model:
+    d_model: 128
+    n_heads: 4
+    n_layers: 4
+    dropout: 0.1
+
+msar:
+  # if dataset is in the order-selection list, these are tried
+  candidate_orders: [2, 3, 4, 5, 6, 8, 10]
+  maxiter: 150
+  em_iter: 10

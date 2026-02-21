@@ -1,0 +1,25 @@
+2026-02-21 16:23:22,204 | INFO | dataset=A1_ar2_coeffs_easy device=cpu n_train_windows=636 n_val_windows=300
+2026-02-21 16:23:22,205 | INFO | train-only standardizer: mean=0.020842 std=0.444145
+2026-02-21 16:23:27,212 | INFO | step=0 loss=2.523466 train_rmse=1.422842 val_rmse=1.415753
+2026-02-21 16:24:49,264 | INFO | step=50 loss=0.560258 train_rmse=0.805577 val_rmse=0.799891
+2026-02-21 16:26:04,268 | INFO | step=100 loss=0.611773 train_rmse=0.768531 val_rmse=0.775129
+2026-02-21 16:27:21,650 | INFO | step=150 loss=0.558325 train_rmse=0.777456 val_rmse=0.770761
+2026-02-21 16:28:34,247 | INFO | step=200 loss=0.617124 train_rmse=0.790321 val_rmse=0.780137
+2026-02-21 16:29:46,896 | INFO | step=250 loss=0.610420 train_rmse=0.737727 val_rmse=0.764262
+2026-02-21 16:31:04,151 | INFO | step=300 loss=0.527135 train_rmse=0.705549 val_rmse=0.766965
+2026-02-21 16:32:22,380 | INFO | step=350 loss=0.538528 train_rmse=0.723486 val_rmse=0.813992
+2026-02-21 16:33:42,162 | INFO | step=400 loss=0.567305 train_rmse=0.680674 val_rmse=0.777886
+2026-02-21 16:34:53,890 | INFO | step=450 loss=0.374258 train_rmse=0.656802 val_rmse=0.822516
+2026-02-21 16:36:09,219 | INFO | step=500 loss=0.434459 train_rmse=0.576906 val_rmse=0.798728
+2026-02-21 16:37:22,242 | INFO | step=550 loss=0.407177 train_rmse=0.550947 val_rmse=0.874052
+2026-02-21 16:38:34,702 | INFO | step=600 loss=0.278279 train_rmse=0.560773 val_rmse=0.872262
+2026-02-21 16:39:47,065 | INFO | step=650 loss=0.232094 train_rmse=0.482774 val_rmse=0.902650
+2026-02-21 16:41:00,485 | INFO | step=700 loss=0.269376 train_rmse=0.451875 val_rmse=0.907299
+2026-02-21 16:42:11,863 | INFO | step=750 loss=0.337478 train_rmse=0.486453 val_rmse=0.987331
+2026-02-21 16:43:28,025 | INFO | step=800 loss=0.233749 train_rmse=0.379331 val_rmse=0.950917
+2026-02-21 16:44:42,694 | INFO | step=850 loss=0.197895 train_rmse=0.333551 val_rmse=0.947974
+2026-02-21 16:45:52,995 | INFO | step=900 loss=0.261493 train_rmse=0.431899 val_rmse=0.969460
+2026-02-21 16:47:04,613 | INFO | step=950 loss=0.137040 train_rmse=0.300824 val_rmse=0.952798
+2026-02-21 16:48:18,535 | INFO | step=999 loss=0.132303 train_rmse=0.308905 val_rmse=0.934975
+2026-02-21 16:48:22,993 | INFO | saved transformer_results.json
+2026-02-21 16:48:23,051 | INFO | saved checkpoint to runs/A1_ar2_coeffs_easy/transformer_ckpt.pt
