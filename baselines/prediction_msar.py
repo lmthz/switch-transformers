@@ -120,12 +120,27 @@ def fit_markov_ar(y_train: np.ndarray, cfg: MSARConfig, exog_train: Optional[np.
     return model, res
 
 
-def predict_one_step(res, y: np.ndarray, start: int, end: int) -> np.ndarray:
-    # statsmodels uses one-step predictions based on in-sample filtering
-    # we ask for predictions on [start, end]
-    pred = np.asarray(res.predict(start=start, end=end))
-    return pred
+def predict_in_sample(res) -> np.ndarray:
+    """
+    In-sample one-step-ahead predictions for MarkovAutoregression.
 
+    statsmodels does not consistently implement res.predict() for MarkovSwitching classes,
+    but fittedvalues is available and corresponds to in-sample conditional means.
+    """
+    fv = getattr(res, "fittedvalues", None)
+    if fv is None:
+        raise RuntimeError("results object has no fittedvalues; cannot compute in-sample predictions")
+    return np.asarray(fv, dtype=float)
+
+
+def predict_out_of_sample(res, steps: int) -> np.ndarray:
+    """
+    Out-of-sample forecasts for MarkovAutoregression.
+
+    Uses res.forecast(steps=...) which is implemented.
+    """
+    fc = res.forecast(steps=steps)
+    return np.asarray(fc, dtype=float)
 
 def evaluate_msar_fixed_order(
     dataset_name: str,
@@ -151,8 +166,21 @@ def evaluate_msar_fixed_order(
 
     # predictions for train and val
     # train predictions start at 0, but early indices may be less meaningful due to lag order
-    pred_train = predict_one_step(res, y, start=0, end=n_train - 1)
-    pred_val = predict_one_step(res, y, start=n_train, end=n_total - 1)
+    # --- in-sample (train) ---
+    pred_train_all = predict_in_sample(res)  # length is typically n_train - order (or similar)
+    # align to y_train
+    y_train = y[:n_train]
+    m_tr = min(len(pred_train_all), len(y_train))
+    pred_train = pred_train_all[-m_tr:]
+    y_train_aligned = y_train[-m_tr:]
+
+    # --- out-of-sample (val) ---
+    n_val = len(y) - n_train
+    pred_val = predict_out_of_sample(res, steps=n_val)  # length n_val
+    y_val = y[n_train:]
+    m_va = min(len(pred_val), len(y_val))
+    pred_val = pred_val[:m_va]
+    y_val_aligned = y_val[:m_va]
 
     err_train = y[:len(pred_train)] - pred_train
     err_val = y[n_train : n_train + len(pred_val)] - pred_val
