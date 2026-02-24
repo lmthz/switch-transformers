@@ -47,23 +47,39 @@ CONFIGS: Dict[str, MSARConfig] = {
     "D2_arima221": MSARConfig("D2_arima221", order=5),
     "D3_arima210": MSARConfig("D3_arima210", order=5),
 
-    "E1_drift_only": MSARConfig("E1_drift_only", order=2, switching_ar=False, switching_variance=False, switching_exog=True, use_exog=True),
-    "E2_level_shift": MSARConfig("E2_level_shift", order=2, switching_ar=False, switching_variance=False, switching_exog=True, use_exog=True),
+    "E1_drift_only": MSARConfig(
+        "E1_drift_only", order=2,
+        switching_ar=False, switching_variance=False,
+        switching_exog=True, use_exog=True
+    ),
+    "E2_level_shift": MSARConfig(
+        "E2_level_shift", order=2,
+        switching_ar=False, switching_variance=False,
+        switching_exog=True, use_exog=True
+    ),
 
     "F1_seasonal_sarimax": MSARConfig("F1_seasonal_sarimax", order=5),
-    "F2_seasonal_exog": MSARConfig("F2_seasonal_exog", order=5, switching_ar=False, switching_variance=False, switching_exog=True, use_exog=True),
+    "F2_seasonal_exog": MSARConfig(
+        "F2_seasonal_exog", order=5,
+        switching_ar=False, switching_variance=False,
+        switching_exog=True, use_exog=True
+    ),
 
-    "G1_exogenous_only": MSARConfig("G1_exogenous_only", order=2, switching_ar=False, switching_variance=False, switching_exog=True, use_exog=True),
+    "G1_exogenous_only": MSARConfig(
+        "G1_exogenous_only", order=2,
+        switching_ar=False, switching_variance=False,
+        switching_exog=True, use_exog=True
+    ),
 
-    "H1_ar10_coeffs": MSARConfig("H1_ar10_coeffs", order=10),
-    "H2_ar1_near_unit_root": MSARConfig("H2_ar1_near_unit_root", order=1),
+    "H1_high_order_ar10": MSARConfig("H1_high_order_ar10", order=10),
 
-    "S1_sparse_switching": MSARConfig("S1_sparse_switching", order=2),
-    "S2_frequent_switching": MSARConfig("S2_frequent_switching", order=2),
+    "I1_near_unit_root": MSARConfig("I1_near_unit_root", order=2),
 
-    "NS0_A1_no_switch_regime0": MSARConfig("NS0_A1_no_switch_regime0", order=2),
-    "NS1_A1_no_switch_regime1": MSARConfig("NS1_A1_no_switch_regime1", order=2),
-    "SW1_A1_single_switch": MSARConfig("SW1_A1_single_switch", order=2),
+    "J1_sparse_switching": MSARConfig("J1_sparse_switching", order=2),
+    "J2_frequent_switching": MSARConfig("J2_frequent_switching", order=2),
+
+    "K1_no_switch": MSARConfig("K1_no_switch", order=2),
+    "K2_single_switch": MSARConfig("K2_single_switch", order=2),
 }
 
 
@@ -78,15 +94,15 @@ ARMA_ARIMA_DATASETS = {
 
 
 # ================================================================
-# DATA LOADING
+# IO
 # ================================================================
 
-def load_npz_series(data_dir: str, dataset_name: str):
-    arr = np.load(Path(data_dir) / f"{dataset_name}.npz")
-    y = arr["y"].astype(float)
-    states = arr["states"].astype(int)
-    T = arr["T"].astype(float)
-
+def load_npz_series(data_dir: Path, dataset_name: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
+    p = data_dir / f"{dataset_name}.npz"
+    arr = np.load(p, allow_pickle=True)
+    y = np.asarray(arr["y"], dtype=float).flatten()
+    states = np.asarray(arr["states"], dtype=int).flatten()
+    T = np.asarray(arr["T"], dtype=float)
     sigma = arr["sigma"] if "sigma" in arr.files else None
     return y, states, T, sigma
 
@@ -94,8 +110,15 @@ def load_npz_series(data_dir: str, dataset_name: str):
 def build_exog_for_dataset(dataset_name: str, n_total: int) -> Optional[np.ndarray]:
     t = np.arange(n_total)
 
-    if dataset_name in ("E1_drift_only", "E2_level_shift"):
-        return np.ones((n_total, 1), dtype=float)
+    if dataset_name == "E1_drift_only":
+        # non-constant ramp so it is not collinear with the intercept (trend="c")
+        x = t.astype(float) / float(max(n_total - 1, 1))
+        return x[:, None]
+
+    if dataset_name == "E2_level_shift":
+        # step function (0 then 1) so it is not collinear with the intercept
+        x = (t >= (n_total // 2)).astype(float)
+        return x[:, None]
 
     if dataset_name == "G1_exogenous_only":
         s = 24
@@ -127,17 +150,15 @@ def fit_markov_ar(y_train, cfg, exog_train, maxiter, em_iter):
         switching_exog=cfg.switching_exog,
         switching_variance=cfg.switching_variance,
     )
-
     try:
-        res = model.fit(disp=False, maxiter=maxiter, em_iter=em_iter)
-    except LinAlgError:
-        res = model.fit(disp=False, maxiter=maxiter, em_iter=0)
-
-    return model, res
+        res = model.fit(maxiter=maxiter, em_iter=em_iter, disp=False)
+    except LinAlgError as e:
+        raise RuntimeError(f"msar fit failed due to LinAlgError: {e}") from e
+    return res
 
 
 # ================================================================
-# SAFE PROB EXTRACTION
+# SHAPE / PADDING HELPERS
 # ================================================================
 
 def _to_2d_array(x) -> Optional[np.ndarray]:
@@ -206,6 +227,8 @@ def predict_full_series_with_fixed_params(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     one step ahead predictions for entire series using params estimated on train only.
+
+    Regime decoding uses filtered_marginal_probabilities (online inference) only.
     """
     model_full = MarkovAutoregression(
         endog=y_full,
@@ -224,21 +247,20 @@ def predict_full_series_with_fixed_params(
     fv_raw = getattr(res_full, "fittedvalues", None)
     fv = _pad_fittedvalues(np.asarray(fv_raw, dtype=float), nobs=len(y_full), order=cfg.order)
 
-    probs_raw = getattr(res_full, "smoothed_marginal_probabilities", None)
+    probs_raw = getattr(res_full, "filtered_marginal_probabilities", None)
     probs = _to_2d_array(probs_raw)
-
-    if probs is None:
-        # fallback: filtered probabilities if smoothing is unavailable
-        probs_raw2 = getattr(res_full, "filtered_marginal_probabilities", None)
-        probs = _to_2d_array(probs_raw2)
 
     if probs is None:
         decoded = np.full(len(y_full), -1, dtype=int)
         return fv, decoded
 
+    # statsmodels may return shape (k, nobs-order) or (nobs-order, k)
+    if probs.shape[1] != cfg.k_regimes and probs.shape[0] == cfg.k_regimes:
+        probs = probs.T
+
     probs = _pad_to_nobs(probs, nobs=len(y_full), order=cfg.order)
 
-    # if probs has NaNs in padded region, argmax would break, so fill with uniform
+    # padded region may contain NaNs; fill with uniform so argmax is defined
     k = probs.shape[1]
     nan_rows = ~np.isfinite(probs).all(axis=1)
     if np.any(nan_rows):
@@ -254,29 +276,26 @@ def predict_full_series_with_fixed_params(
 
 def evaluate_msar_fixed_order(
     dataset_name: str,
-    data_dir: str,
+    data_dir: Path,
     cfg: MSARConfig,
     val_frac: float,
     maxiter: int,
     em_iter: int,
 ) -> Dict[str, Any]:
-
-    y_raw, true_states, _T, sigma = load_npz_series(data_dir, dataset_name)
+    y_raw, true_states, T, sigma = load_npz_series(data_dir, dataset_name)
     n = len(y_raw)
-    n_train, _ = train_val_split_indices(n, val_frac)
+    n_train, n_val = train_val_split_indices(n, val_frac)
 
     # train-only standardization
-    mean = float(y_raw[:n_train].mean())
-    std = float(y_raw[:n_train].std())
-    if std <= 0:
-        std = 1.0
-    y = (y_raw - mean) / std
+    mu = float(np.mean(y_raw[:n_train]))
+    std = float(np.std(y_raw[:n_train]) + 1e-8)
+    y = (y_raw - mu) / std
 
-    exog_full = build_exog_for_dataset(dataset_name, n) if cfg.use_exog else None
-    exog_train = exog_full[:n_train] if exog_full is not None else None
+    exog_full = build_exog_for_dataset(dataset_name, n_total=n)
+    exog_train = exog_full[:n_train] if (cfg.use_exog and exog_full is not None) else None
 
     # fit on train only
-    _, res_train = fit_markov_ar(y[:n_train], cfg, exog_train, maxiter, em_iter)
+    res_train = fit_markov_ar(y[:n_train], cfg, exog_train, maxiter, em_iter)
 
     # fixed-param filtering for full-series one-step predictions
     pred_full, decoded_full = predict_full_series_with_fixed_params(y, cfg, exog_full, res_train.params)
@@ -298,8 +317,18 @@ def evaluate_msar_fixed_order(
     val_mse, val_rmse = mse_rmse(err_val)
 
     # regime accuracy evaluated on train region only
-    dec_train = decoded_full[:n_train]
-    acc = label_corrected_accuracy(dec_train, true_states[:n_train], cfg.k_regimes)
+    # exclude the first `order` points where statsmodels outputs are padded
+    start = int(cfg.order)
+    if n_train <= start:
+        acc = float("nan")
+    else:
+        dec_train = decoded_full[start:n_train]
+        true_train = true_states[start:n_train]
+        valid = dec_train >= 0
+        if not np.any(valid):
+            acc = float("nan")
+        else:
+            acc = label_corrected_accuracy(dec_train[valid], true_train[valid], cfg.k_regimes)
 
     # oracle noise floor in standardized units
     if sigma is not None:
@@ -318,40 +347,62 @@ def evaluate_msar_fixed_order(
         "order": int(cfg.order),
         "train_rmse": float(train_rmse),
         "val_rmse": float(val_rmse),
-        "regime_accuracy": float(acc["acc"]),
-        "regime_accuracy_no_swap": float(acc["acc_no_swap"]),
-        "regime_accuracy_swap": float(acc["acc_swap"]),
+        "train_mse": float(train_mse),
+        "val_mse": float(val_mse),
+        "train_regime_acc": float(acc),
+        "per_regime_rmse_train": per_reg_train,
+        "per_regime_rmse_val": per_reg_val,
         "noise_rmse": float(noise_rmse),
-        "per_regime_train": per_reg_train,
-        "per_regime_val": per_reg_val,
-        "std_used": float(std),
+        "n": int(n),
+        "n_train": int(n_train),
+        "n_val": int(n_val),
     }
 
 
 def run_msar(
     dataset_name: str,
-    data_dir: str = "generated_data",
-    val_frac: float = 0.3,
+    data_dir: Path,
+    val_frac: float = 0.2,
     candidate_orders: Optional[List[int]] = None,
     maxiter: int = 150,
     em_iter: int = 10,
 ) -> Dict[str, Any]:
+    if dataset_name not in CONFIGS:
+        raise KeyError(f"unknown dataset {dataset_name}")
 
-    cfg0 = CONFIGS[dataset_name]
+    base_cfg = CONFIGS[dataset_name]
 
-    if dataset_name in ARMA_ARIMA_DATASETS and candidate_orders:
-        best: Optional[Dict[str, Any]] = None
-        best_metric = float("inf")
-        for o in candidate_orders:
-            cfg = replace(cfg0, order=int(o))
-            out = evaluate_msar_fixed_order(dataset_name, data_dir, cfg, val_frac, maxiter, em_iter)
-            # for now: choose by val rmse (out of sample)
-            metric = out["val_rmse"]
-            if np.isfinite(metric) and metric < best_metric:
-                best_metric = metric
-                best = out
-                best["selected_order"] = int(o)
-        if best is not None:
-            return best
+    if candidate_orders is None:
+        candidate_orders = [base_cfg.order]
 
-    return evaluate_msar_fixed_order(dataset_name, data_dir, cfg0, val_frac, maxiter, em_iter)
+    # for ARMA/ARIMA-type data, override order grid if given
+    if dataset_name in ARMA_ARIMA_DATASETS and candidate_orders is None:
+        candidate_orders = [2, 3, 4, 5, 6, 8, 10]
+
+    best: Optional[Dict[str, Any]] = None
+    best_val = float("inf")
+
+    for o in candidate_orders:
+        cfg = replace(base_cfg, order=int(o))
+        try:
+            out = evaluate_msar_fixed_order(
+                dataset_name=dataset_name,
+                data_dir=data_dir,
+                cfg=cfg,
+                val_frac=val_frac,
+                maxiter=maxiter,
+                em_iter=em_iter,
+            )
+        except Exception:
+            continue
+
+        v = float(out["val_rmse"])
+        if v < best_val:
+            best_val = v
+            best = out
+
+    if best is None:
+        raise RuntimeError(f"no msar run succeeded for {dataset_name}")
+
+    best["selected_order"] = int(best["order"])
+    return best
