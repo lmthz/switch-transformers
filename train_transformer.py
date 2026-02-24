@@ -15,18 +15,40 @@ from models.transformer_forecaster import TransformerConfig, CausalTransformerFo
 from metrics import mse_rmse
 
 
+# ============================================================
+# Device utility (robust to CPU-only PyTorch)
+# ============================================================
+
+def resolve_device(device_str: str) -> torch.device:
+    """
+    Safely resolve device. Falls back to CPU if CUDA
+    not available or torch not compiled with CUDA.
+    """
+    if device_str == "cuda":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        else:
+            print("⚠ CUDA requested but not available. Falling back to CPU.")
+            return torch.device("cpu")
+    return torch.device("cpu")
+
+
 @torch.no_grad()
-def eval_loop(model: torch.nn.Module, loader: DataLoader, device: str) -> Tuple[float, float]:
+def eval_loop(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> Tuple[float, float]:
     model.eval()
     errs: List[np.ndarray] = []
+
     for x, y, _s in loader:
         x = x.to(device)
         y = y.to(device)
+
         yhat = model(x)
         e = (y - yhat).detach().cpu().numpy().reshape(-1)
         errs.append(e)
+
     if not errs:
         return float("nan"), float("nan")
+
     eall = np.concatenate(errs)
     mse, rmse = mse_rmse(eall)
     return mse, rmse
@@ -47,6 +69,12 @@ def train_one_dataset(
     device: str,
 ) -> Dict[str, Any]:
 
+    # --------------------------------------------------------
+    # Resolve device safely
+    # --------------------------------------------------------
+    device = resolve_device(device)
+    print("Using device:", device)
+
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -66,6 +94,7 @@ def train_one_dataset(
         n_layers=n_layers,
         dropout=dropout,
     )
+
     model = CausalTransformerForecaster(cfg).to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
@@ -89,6 +118,7 @@ def train_one_dataset(
         yhat = model(x)
         loss = loss_fn(yhat, y)
         loss.backward()
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
 
@@ -96,7 +126,12 @@ def train_one_dataset(
             _mse_v, rmse_v = eval_loop(model, val_loader, device=device)
             pbar.set_postfix(loss=float(loss.item()), val_rmse=float(rmse_v))
 
-    mse_tr, rmse_tr = eval_loop(model, DataLoader(ds_train, batch_size=batch_size, shuffle=False), device=device)
+    mse_tr, rmse_tr = eval_loop(
+        model,
+        DataLoader(ds_train, batch_size=batch_size, shuffle=False),
+        device=device,
+    )
+
     mse_v, rmse_v = eval_loop(model, val_loader, device=device)
 
     return {
@@ -130,11 +165,15 @@ def main():
     ap.add_argument("--dropout", type=float, default=0.1)
 
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+
+    # Keep CLI arg but resolve safely later
+    ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--save_metrics", type=str, default=None)
+
     args = ap.parse_args()
 
     npz_path = str(Path(args.data_dir) / f"{args.dataset}.npz")
+
     out = train_one_dataset(
         npz_path=npz_path,
         context_len=args.context_len,
