@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, Any, Tuple
 
 import numpy as np
 from numpy.linalg import LinAlgError
@@ -102,82 +102,6 @@ ARMA_ARIMA_DATASETS = {
     "F2_seasonal_exog",
 }
 
-# ================================================================
-# PROBABILITY SHAPE NORMALIZATION (statsmodels-version-robust)
-# ================================================================
-
-def _as_prob_matrix(probs, nobs: int, k_regimes: int) -> np.ndarray:
-    """
-    Convert regime probability outputs into shape (nobs, k_regimes).
-
-    Handles common shapes:
-      - (nobs, k)
-      - (k, nobs)
-      - 1D length nobs (interpreted as P(regime=1) when k=2)
-      - flattened length nobs*k
-      - (nobs, 1) (interpreted as P(regime=1) when k=2)
-
-    If probs is None, raises ValueError (caller should fall back to filtered/prodicted probs).
-    """
-    if probs is None:
-        raise ValueError("probs is None")
-
-    p = np.asarray(probs)
-
-    try:
-        p = p.astype(float)
-    except Exception:
-        p = np.array(p, dtype=float)
-
-    if p.ndim == 1:
-        if k_regimes == 2 and p.shape[0] == nobs:
-            p1 = np.clip(p, 0.0, 1.0)
-            return np.column_stack([1.0 - p1, p1])
-
-        if p.size == nobs * k_regimes:
-            return p.reshape(nobs, k_regimes)
-
-        if p.shape[0] == nobs:
-            return p.reshape(nobs, 1)
-
-        raise ValueError(f"Unexpected 1D probs shape {p.shape} for nobs={nobs}, k={k_regimes}")
-
-    if p.ndim == 2:
-        if p.shape == (nobs, k_regimes):
-            return p
-
-        if p.shape == (k_regimes, nobs):
-            return p.T
-
-        if p.shape[0] == nobs and p.shape[1] == 1 and k_regimes == 2:
-            p1 = np.clip(p[:, 0], 0.0, 1.0)
-            return np.column_stack([1.0 - p1, p1])
-
-        if p.size == nobs * k_regimes:
-            return p.reshape(nobs, k_regimes)
-
-        raise ValueError(f"Unexpected 2D probs shape {p.shape} for nobs={nobs}, k={k_regimes}")
-
-    raise ValueError(f"Unexpected probs ndim={p.ndim} shape={p.shape}")
-
-
-def _get_best_regime_probs(res_full) -> object:
-    """
-    statsmodels compatibility:
-    - some results from .filter(params) do not compute smoothed probs (None)
-    - filtered probs usually exist
-    - predicted probs are another fallback
-    """
-    cand = [
-        getattr(res_full, "smoothed_marginal_probabilities", None),
-        getattr(res_full, "filtered_marginal_probabilities", None),
-        getattr(res_full, "predicted_marginal_probabilities", None),
-    ]
-    for c in cand:
-        if c is not None:
-            return c
-    return None
-
 
 # ================================================================
 # DATA LOADING
@@ -244,6 +168,108 @@ def fit_markov_ar(y_train, cfg, exog_train, maxiter, em_iter):
 
 
 # ================================================================
+# PROB HANDLING (statsmodels 0.13.5: often length nobs-order)
+# ================================================================
+
+def _get_best_regime_probs(res_full) -> Optional[Any]:
+    cand = [
+        getattr(res_full, "smoothed_marginal_probabilities", None),
+        getattr(res_full, "filtered_marginal_probabilities", None),
+        getattr(res_full, "predicted_marginal_probabilities", None),
+    ]
+    for c in cand:
+        if c is not None:
+            return c
+    return None
+
+
+def _coerce_prob_matrix(p_raw: Any, k_regimes: int) -> np.ndarray:
+    """
+    Return a 2D array either (n, k) or (k, n). Caller will align length.
+    """
+    if p_raw is None:
+        raise ValueError("regime probabilities are None")
+
+    p = np.asarray(p_raw, dtype=float)
+
+    if p.ndim == 1:
+        # interpret as P(regime=1) when k=2
+        if k_regimes == 2:
+            p1 = np.clip(p, 0.0, 1.0)
+            return np.column_stack([1.0 - p1, p1])
+        return p.reshape(-1, 1)
+
+    if p.ndim == 2:
+        return p
+
+    raise ValueError(f"unexpected probs ndim={p.ndim} shape={p.shape}")
+
+
+def _align_probs_to_nobs(
+    prob_mat: np.ndarray,
+    nobs: int,
+    order: int,
+    k_regimes: int,
+) -> np.ndarray:
+    """
+    statsmodels 0.13.5 often returns probs for t=order..nobs-1, i.e. length nobs-order.
+
+    We align by padding the first `order` rows with nan and placing the returned
+    probs at indices [order:].
+    """
+    p = np.asarray(prob_mat, dtype=float)
+
+    # ensure shape (n, k)
+    if p.shape[1] == k_regimes:
+        p_nk = p
+    elif p.shape[0] == k_regimes and p.shape[1] != k_regimes:
+        p_nk = p.T
+    else:
+        # if ambiguous, try to infer by whichever dim equals k
+        if p.shape[0] == k_regimes:
+            p_nk = p.T
+        elif p.shape[1] == k_regimes:
+            p_nk = p
+        else:
+            raise ValueError(f"cannot infer probs orientation, shape={p.shape}, k={k_regimes}")
+
+    n_ret = p_nk.shape[0]
+
+    # case 1: already full length
+    if n_ret == nobs:
+        return p_nk
+
+    # case 2: nobs-order
+    if n_ret == nobs - order:
+        out = np.full((nobs, k_regimes), np.nan, dtype=float)
+        out[order:, :] = p_nk
+        return out
+
+    # case 3: something else, try generic left-pad so last aligns to end
+    if n_ret < nobs:
+        out = np.full((nobs, k_regimes), np.nan, dtype=float)
+        out[nobs - n_ret :, :] = p_nk
+        return out
+
+    raise ValueError(f"probs longer than series: probs={n_ret}, nobs={nobs}")
+
+
+def _align_fittedvalues_to_nobs(fv_raw: Any, nobs: int) -> np.ndarray:
+    """
+    Ensure fittedvalues is length nobs. If shorter, pad on the left with nan.
+    """
+    fv = np.asarray(fv_raw, dtype=float).reshape(-1)
+    if fv.size == nobs:
+        return fv
+    if fv.size < nobs:
+        out = np.full(nobs, np.nan, dtype=float)
+        out[nobs - fv.size :] = fv
+        return out
+    # if longer, truncate
+    return fv[-nobs:]
+
+
+# ================================================================
 # ONE-STEP-AHEAD FORECASTING VIA FILTER
 # ================================================================
 
@@ -252,13 +278,10 @@ def predict_full_series_with_fixed_params(
     cfg: MSARConfig,
     exog_full: Optional[np.ndarray],
     train_params: np.ndarray,
-):
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Produces one-step-ahead predictions for full series,
     using parameters estimated on training only.
-
-    Important: on some statsmodels versions, filter(params) does NOT populate
-    smoothed_marginal_probabilities. We fall back to filtered/predicted probs.
     """
     model_full = MarkovAutoregression(
         endog=y_full,
@@ -274,17 +297,15 @@ def predict_full_series_with_fixed_params(
 
     res_full = model_full.filter(train_params)
 
-    fv = np.asarray(res_full.fittedvalues, dtype=float)
+    fv = _align_fittedvalues_to_nobs(getattr(res_full, "fittedvalues", None), nobs=len(y_full))
 
     probs_raw = _get_best_regime_probs(res_full)
-    if probs_raw is None:
-        raise ValueError(
-            "No regime probabilities available on this statsmodels Results object "
-            "(smoothed/filtered/predicted all None)."
-        )
+    prob_mat = _coerce_prob_matrix(probs_raw, k_regimes=cfg.k_regimes)
+    prob_full = _align_probs_to_nobs(prob_mat, nobs=len(y_full), order=cfg.order, k_regimes=cfg.k_regimes)
 
-    prob_mat = _as_prob_matrix(probs_raw, nobs=len(y_full), k_regimes=cfg.k_regimes)
-    decoded = np.argmax(prob_mat, axis=1)
+    decoded = np.full(len(y_full), -1, dtype=int)
+    ok = np.isfinite(prob_full).all(axis=1)
+    decoded[ok] = np.argmax(prob_full[ok], axis=1)
 
     return fv, decoded
 
@@ -321,6 +342,7 @@ def evaluate_msar_fixed_order(
         y, cfg, exog_full, res_train.params
     )
 
+    # valid prediction indices
     mask = np.isfinite(pred_full)
     idx = np.where(mask)[0]
 
@@ -336,9 +358,15 @@ def evaluate_msar_fixed_order(
     train_mse, train_rmse = mse_rmse(err_train)
     val_mse, val_rmse = mse_rmse(err_val)
 
-    acc_train = label_corrected_accuracy(
-        decoded_full[:n_train], true_states[:n_train], cfg.k_regimes
-    )
+    # regime accuracy on train, only where decoded is defined
+    dec_train = decoded_full[:n_train]
+    tru_train = true_states[:n_train]
+    ok_dec = dec_train >= 0
+    if ok_dec.sum() > 0:
+        acc_train = label_corrected_accuracy(dec_train[ok_dec], tru_train[ok_dec], cfg.k_regimes)
+        acc_val = float(acc_train["acc"])
+    else:
+        acc_val = float("nan")
 
     if sigma is not None:
         sigma_vec = np.asarray(sigma).flatten() / std
@@ -357,7 +385,7 @@ def evaluate_msar_fixed_order(
         "dataset": dataset_name,
         "train_rmse": train_rmse,
         "val_rmse": val_rmse,
-        "regime_accuracy": acc_train["acc"],
+        "regime_accuracy": acc_val,
         "noise_rmse": noise_rmse,
         "per_regime_train": per_reg_train,
         "per_regime_val": per_reg_val,
@@ -380,8 +408,7 @@ def run_msar(dataset_name, data_dir, val_frac, candidate_orders, maxiter, em_ite
             cfg = replace(cfg0, order=int(o))
             out = evaluate_msar_fixed_order(dataset_name, data_dir, cfg, val_frac, maxiter, em_iter)
 
-            # For now: select by train RMSE (keeps code simple).
-            # Later you can switch to val_rmse or true BIC once you wire it.
+            # keep it simple: select by train RMSE for now
             metric = float(out["train_rmse"])
 
             if metric < best_metric:
