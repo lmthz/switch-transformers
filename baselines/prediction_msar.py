@@ -46,27 +46,39 @@ CONFIGS: Dict[str, MSARConfig] = {
     "D3_arima210": MSARConfig("D3_arima210", order=5),
 
     "E1_drift_only": MSARConfig(
-        "E1_drift_only", order=2,
-        switching_ar=False, switching_variance=False,
-        switching_exog=True, use_exog=True
+        "E1_drift_only",
+        order=2,
+        switching_ar=False,
+        switching_variance=False,
+        switching_exog=True,
+        use_exog=True,
     ),
     "E2_level_shift": MSARConfig(
-        "E2_level_shift", order=2,
-        switching_ar=False, switching_variance=False,
-        switching_exog=True, use_exog=True
+        "E2_level_shift",
+        order=2,
+        switching_ar=False,
+        switching_variance=False,
+        switching_exog=True,
+        use_exog=True,
     ),
 
     "F1_seasonal_sarimax": MSARConfig("F1_seasonal_sarimax", order=5),
     "F2_seasonal_exog": MSARConfig(
-        "F2_seasonal_exog", order=5,
-        switching_ar=False, switching_variance=False,
-        switching_exog=True, use_exog=True
+        "F2_seasonal_exog",
+        order=5,
+        switching_ar=False,
+        switching_variance=False,
+        switching_exog=True,
+        use_exog=True,
     ),
 
     "G1_exogenous_only": MSARConfig(
-        "G1_exogenous_only", order=2,
-        switching_ar=False, switching_variance=False,
-        switching_exog=True, use_exog=True
+        "G1_exogenous_only",
+        order=2,
+        switching_ar=False,
+        switching_variance=False,
+        switching_exog=True,
+        use_exog=True,
     ),
 
     "H1_ar10_coeffs": MSARConfig("H1_ar10_coeffs", order=10),
@@ -96,7 +108,7 @@ ARMA_ARIMA_DATASETS = {
 
 def _as_prob_matrix(probs, nobs: int, k_regimes: int) -> np.ndarray:
     """
-    Convert statsmodels regime probability outputs into shape (nobs, k_regimes).
+    Convert regime probability outputs into shape (nobs, k_regimes).
 
     Handles common shapes:
       - (nobs, k)
@@ -104,11 +116,14 @@ def _as_prob_matrix(probs, nobs: int, k_regimes: int) -> np.ndarray:
       - 1D length nobs (interpreted as P(regime=1) when k=2)
       - flattened length nobs*k
       - (nobs, 1) (interpreted as P(regime=1) when k=2)
+
+    If probs is None, raises ValueError (caller should fall back to filtered/prodicted probs).
     """
+    if probs is None:
+        raise ValueError("probs is None")
+
     p = np.asarray(probs)
 
-    # If it's a pandas object, np.asarray can produce dtype=object in odd cases.
-    # Force float if possible.
     try:
         p = p.astype(float)
     except Exception:
@@ -116,7 +131,6 @@ def _as_prob_matrix(probs, nobs: int, k_regimes: int) -> np.ndarray:
 
     if p.ndim == 1:
         if k_regimes == 2 and p.shape[0] == nobs:
-            # interpret as P(S_t=1); build [P(S_t=0), P(S_t=1)]
             p1 = np.clip(p, 0.0, 1.0)
             return np.column_stack([1.0 - p1, p1])
 
@@ -124,7 +138,6 @@ def _as_prob_matrix(probs, nobs: int, k_regimes: int) -> np.ndarray:
             return p.reshape(nobs, k_regimes)
 
         if p.shape[0] == nobs:
-            # single-regime or unknown; treat as one-column
             return p.reshape(nobs, 1)
 
         raise ValueError(f"Unexpected 1D probs shape {p.shape} for nobs={nobs}, k={k_regimes}")
@@ -140,13 +153,31 @@ def _as_prob_matrix(probs, nobs: int, k_regimes: int) -> np.ndarray:
             p1 = np.clip(p[:, 0], 0.0, 1.0)
             return np.column_stack([1.0 - p1, p1])
 
-        # Sometimes flattened 2D weirdness, try reshape if total size matches.
         if p.size == nobs * k_regimes:
             return p.reshape(nobs, k_regimes)
 
         raise ValueError(f"Unexpected 2D probs shape {p.shape} for nobs={nobs}, k={k_regimes}")
 
     raise ValueError(f"Unexpected probs ndim={p.ndim} shape={p.shape}")
+
+
+def _get_best_regime_probs(res_full) -> object:
+    """
+    statsmodels compatibility:
+    - some results from .filter(params) do not compute smoothed probs (None)
+    - filtered probs usually exist
+    - predicted probs are another fallback
+    """
+    cand = [
+        getattr(res_full, "smoothed_marginal_probabilities", None),
+        getattr(res_full, "filtered_marginal_probabilities", None),
+        getattr(res_full, "predicted_marginal_probabilities", None),
+    ]
+    for c in cand:
+        if c is not None:
+            return c
+    return None
+
 
 # ================================================================
 # DATA LOADING
@@ -226,8 +257,8 @@ def predict_full_series_with_fixed_params(
     Produces one-step-ahead predictions for full series,
     using parameters estimated on training only.
 
-    NOTE: statsmodels returns regime probabilities with different shapes across versions.
-    We decode regimes robustly via _as_prob_matrix(...).
+    Important: on some statsmodels versions, filter(params) does NOT populate
+    smoothed_marginal_probabilities. We fall back to filtered/predicted probs.
     """
     model_full = MarkovAutoregression(
         endog=y_full,
@@ -245,8 +276,14 @@ def predict_full_series_with_fixed_params(
 
     fv = np.asarray(res_full.fittedvalues, dtype=float)
 
-    smoothed_raw = res_full.smoothed_marginal_probabilities
-    prob_mat = _as_prob_matrix(smoothed_raw, nobs=len(y_full), k_regimes=cfg.k_regimes)
+    probs_raw = _get_best_regime_probs(res_full)
+    if probs_raw is None:
+        raise ValueError(
+            "No regime probabilities available on this statsmodels Results object "
+            "(smoothed/filtered/predicted all None)."
+        )
+
+    prob_mat = _as_prob_matrix(probs_raw, nobs=len(y_full), k_regimes=cfg.k_regimes)
     decoded = np.argmax(prob_mat, axis=1)
 
     return fv, decoded
@@ -299,7 +336,6 @@ def evaluate_msar_fixed_order(
     train_mse, train_rmse = mse_rmse(err_train)
     val_mse, val_rmse = mse_rmse(err_val)
 
-    # decode accuracy on train segment (label corrected)
     acc_train = label_corrected_accuracy(
         decoded_full[:n_train], true_states[:n_train], cfg.k_regimes
     )
@@ -310,7 +346,6 @@ def evaluate_msar_fixed_order(
     else:
         noise_rmse = float("nan")
 
-    # per-regime RMSE using true states (aligned to idx)
     per_reg_train = per_regime_rmse(
         err_train, true_states[idx][train_mask], cfg.k_regimes
     )
@@ -345,7 +380,8 @@ def run_msar(dataset_name, data_dir, val_frac, candidate_orders, maxiter, em_ite
             cfg = replace(cfg0, order=int(o))
             out = evaluate_msar_fixed_order(dataset_name, data_dir, cfg, val_frac, maxiter, em_iter)
 
-            # NOTE: You can swap this to out["val_rmse"] once BIC is wired up.
+            # For now: select by train RMSE (keeps code simple).
+            # Later you can switch to val_rmse or true BIC once you wire it.
             metric = float(out["train_rmse"])
 
             if metric < best_metric:
