@@ -97,7 +97,7 @@ ARMA_ARIMA_DATASETS = {
 # IO
 # ================================================================
 
-def load_npz_series(data_dir: Path, dataset_name: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
+def load_npz_series(data_dir, dataset_name: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
     p = Path(data_dir) / f"{dataset_name}.npz"
     arr = np.load(p, allow_pickle=True)
     y = np.asarray(arr["y"], dtype=float).flatten()
@@ -380,12 +380,10 @@ def run_msar(
 
     base_cfg = CONFIGS[dataset_name]
 
-    if candidate_orders is None:
+    if dataset_name in ARMA_ARIMA_DATASETS:
+        candidate_orders = candidate_orders or [2, 3, 4, 5, 6, 8, 10]
+    else:
         candidate_orders = [base_cfg.order]
-
-    # for ARMA/ARIMA-type data, override order grid if given
-    if dataset_name in ARMA_ARIMA_DATASETS and candidate_orders is None:
-        candidate_orders = [2, 3, 4, 5, 6, 8, 10]
 
     best: Optional[Dict[str, Any]] = None
     best_val = float("inf")
