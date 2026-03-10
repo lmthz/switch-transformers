@@ -335,7 +335,8 @@ def evaluate_msar_fixed_order(
         if not np.any(valid):
             acc = float("nan")
         else:
-            acc = label_corrected_accuracy(dec_train[valid], true_train[valid], cfg.k_regimes)
+            acc_dict = label_corrected_accuracy(dec_train[valid], true_train[valid], cfg.k_regimes)
+            acc = float(acc_dict["acc"])
 
     # oracle noise floor in standardized units
     if sigma is not None:
@@ -356,7 +357,7 @@ def evaluate_msar_fixed_order(
         "val_rmse": float(val_rmse),
         "train_mse": float(train_mse),
         "val_mse": float(val_mse),
-        "train_regime_acc": float(acc),
+        "regime_accuracy": float(acc),
         "per_regime_rmse_train": per_reg_train,
         "per_regime_rmse_val": per_reg_val,
         "noise_rmse": float(noise_rmse),
@@ -400,7 +401,7 @@ def run_msar(
                 maxiter=maxiter,
                 em_iter=em_iter,
             )
-        except Exception:
+        except (LinAlgError, RuntimeError):
             continue
 
         v = float(out["val_rmse"])
