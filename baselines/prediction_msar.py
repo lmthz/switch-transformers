@@ -98,7 +98,7 @@ ARMA_ARIMA_DATASETS = {
 # ================================================================
 
 def load_npz_series(data_dir: Path, dataset_name: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
-    p = data_dir / f"{dataset_name}.npz"
+    p = Path(data_dir) / f"{dataset_name}.npz"
     arr = np.load(p, allow_pickle=True)
     y = np.asarray(arr["y"], dtype=float).flatten()
     states = np.asarray(arr["states"], dtype=int).flatten()
