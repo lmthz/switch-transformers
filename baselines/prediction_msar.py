@@ -71,15 +71,15 @@ CONFIGS: Dict[str, MSARConfig] = {
         switching_exog=True, use_exog=True
     ),
 
-    "H1_high_order_ar10": MSARConfig("H1_high_order_ar10", order=10),
+    "H1_ar10_coeffs": MSARConfig("H1_ar10_coeffs", order=10),
+    "H2_ar1_near_unit_root": MSARConfig("H2_ar1_near_unit_root", order=1),
 
-    "I1_near_unit_root": MSARConfig("I1_near_unit_root", order=2),
+    "S1_sparse_switching": MSARConfig("S1_sparse_switching", order=2),
+    "S2_frequent_switching": MSARConfig("S2_frequent_switching", order=2),
 
-    "J1_sparse_switching": MSARConfig("J1_sparse_switching", order=2),
-    "J2_frequent_switching": MSARConfig("J2_frequent_switching", order=2),
-
-    "K1_no_switch": MSARConfig("K1_no_switch", order=2),
-    "K2_single_switch": MSARConfig("K2_single_switch", order=2),
+    "NS0_A1_no_switch_regime0": MSARConfig("NS0_A1_no_switch_regime0", order=2),
+    "NS1_A1_no_switch_regime1": MSARConfig("NS1_A1_no_switch_regime1", order=2),
+    "SW1_A1_single_switch": MSARConfig("SW1_A1_single_switch", order=2),
 }
 
 
