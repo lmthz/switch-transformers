@@ -46,15 +46,16 @@ def main():
 
     # transformer hyperparams
     context_len = 64
-    steps = 1500
+    steps = 5000        # iid needs more steps since no overfitting pressure
     batch_size = 128
     lr = 3e-4
-    d_model = 64
-    n_heads = 2
+    d_model = 128
+    n_heads = 4
     n_layers = 4
-    dropout = 0.2
+    dropout = 0.1
     seed = 0
     device = "cuda"
+    training_mode = "iid"   # "iid" = Garg-style, "fixed" = original
 
     rows: List[Dict[str, Any]] = []
 
@@ -97,6 +98,7 @@ def main():
             dropout=dropout,
             seed=seed,
             device=device,
+            training_mode=training_mode,
         )
         print(f"transformer: train_rmse={tr['train_rmse']:.4f} val_rmse={tr['val_rmse']:.4f}")
 
