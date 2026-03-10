@@ -49,10 +49,10 @@ def main():
     steps = 1500
     batch_size = 128
     lr = 3e-4
-    d_model = 128
-    n_heads = 4
+    d_model = 64
+    n_heads = 2
     n_layers = 4
-    dropout = 0.1
+    dropout = 0.2
     seed = 0
     device = "cuda"
 
@@ -66,14 +66,18 @@ def main():
 
         print(f"\n=== {ds} ===")
 
-        msar = run_msar(
-            ds,
-            data_dir=data_dir,
-            val_frac=val_frac,
-            candidate_orders=candidate_orders,
-            maxiter=maxiter,
-            em_iter=em_iter,
-        )
+        try:
+            msar = run_msar(
+                ds,
+                data_dir=data_dir,
+                val_frac=val_frac,
+                candidate_orders=candidate_orders,
+                maxiter=maxiter,
+                em_iter=em_iter,
+            )
+        except Exception as e:
+            print(f"[msar] all orders failed for {ds}, skipping: {e}")
+            continue
         print(
             f"msar: train_rmse={msar['train_rmse']:.4f} val_rmse={msar['val_rmse']:.4f} "
             f"regime_acc(train)={msar['regime_accuracy']:.3f} noise_rmse={msar['noise_rmse']:.4f} "

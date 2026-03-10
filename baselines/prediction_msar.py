@@ -399,7 +399,8 @@ def run_msar(
                 maxiter=maxiter,
                 em_iter=em_iter,
             )
-        except (LinAlgError, RuntimeError):
+        except Exception as e:
+            print(f"[msar] order={o} failed for {dataset_name}: {type(e).__name__}: {e}")
             continue
 
         v = float(out["val_rmse"])
