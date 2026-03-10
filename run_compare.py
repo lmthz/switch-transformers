@@ -7,7 +7,13 @@ from typing import List, Dict, Any
 import pandas as pd
 
 from baselines.prediction_msar import run_msar
-from train_transformer import train_one_dataset
+from train_transformer import train_one_dataset, train_iid, eval_loop, resolve_device
+from train_transformer import MSARBatchSampler, MSARSamplerConfig
+from models.transformer_forecaster import TransformerConfig, CausalTransformerForecaster
+from data.synthetic_npz_dataset import make_train_val_datasets
+from torch.utils.data import DataLoader
+import numpy as np
+import torch
 
 
 DATASETS: List[str] = [
@@ -35,6 +41,37 @@ DATASETS: List[str] = [
 ]
 
 
+def eval_transformer_on_dataset(
+    model: CausalTransformerForecaster,
+    npz_path: str,
+    context_len: int,
+    val_frac: float,
+    batch_size: int,
+    device: torch.device,
+) -> Dict[str, Any]:
+    """
+    Evaluate a pre-trained model on one dataset via in-context forward passes.
+    No training, no fine-tuning — just forward passes with dataset windows as context.
+    """
+    ds_train, ds_val, stdzr, _ = make_train_val_datasets(
+        npz_path=npz_path,
+        context_len=context_len,
+        val_frac=val_frac,
+    )
+    train_loader = DataLoader(ds_train, batch_size=batch_size, shuffle=False)
+    val_loader = DataLoader(ds_val, batch_size=batch_size, shuffle=False)
+
+    _, train_rmse = eval_loop(model, train_loader, device)
+    _, val_rmse = eval_loop(model, val_loader, device)
+
+    return {
+        "train_rmse": float(train_rmse),
+        "val_rmse": float(val_rmse),
+        "n_train": len(ds_train),
+        "n_val": len(ds_val),
+    }
+
+
 def main():
     data_dir = "generated_data"
     val_frac = 0.3
@@ -46,7 +83,7 @@ def main():
 
     # transformer hyperparams
     context_len = 64
-    steps = 5000        # iid needs more steps since no overfitting pressure
+    steps = 5000
     batch_size = 128
     lr = 3e-4
     d_model = 128
@@ -54,8 +91,53 @@ def main():
     n_layers = 4
     dropout = 0.1
     seed = 0
-    device = "cuda"
-    training_mode = "iid"   # "iid" = Garg-style, "fixed" = original
+    device_str = "cuda"
+    training_mode = "iid"
+
+    device = resolve_device(device_str)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    # --------------------------------------------------------
+    # Train transformer once if iid mode
+    # --------------------------------------------------------
+    if training_mode == "iid":
+        print("=== Training transformer (iid, single run) ===")
+        cfg = TransformerConfig(
+            context_len=context_len,
+            d_model=d_model,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            dropout=dropout,
+        )
+        model = CausalTransformerForecaster(cfg).to(device)
+        model.train()
+
+        sampler_cfg = MSARSamplerConfig(
+            series_len=max(512, context_len * 4),
+            k_regimes=2,
+            ar_coeff_scale=0.6,
+            ma_coeff_scale=0.4,
+            sigma_lo=0.15,
+            sigma_hi=0.70,
+            persistence_lo=0.85,
+            persistence_hi=0.98,
+            burn_in=100,
+            mix_ar=0.40,
+            mix_arma=0.25,
+            mix_arima1=0.25,
+            mix_arima2=0.10,
+        )
+        sampler = MSARBatchSampler(sampler_cfg, seed=seed)
+
+        # use first dataset's val split for monitoring during training
+        first_npz = str(Path(data_dir) / f"{DATASETS[0]}.npz")
+        _, ds_val_monitor, _, _ = make_train_val_datasets(first_npz, context_len, val_frac)
+        val_loader_monitor = DataLoader(ds_val_monitor, batch_size=batch_size, shuffle=False)
+
+        train_iid(model, sampler, val_loader_monitor, steps, batch_size, lr, device)
+        model.eval()
+        print("=== Transformer training complete ===\n")
 
     rows: List[Dict[str, Any]] = []
 
@@ -85,21 +167,32 @@ def main():
         except Exception as e:
             print(f"[msar] all orders failed for {ds}, skipping msar: {e}")
 
-        tr = train_one_dataset(
-            npz_path=str(npz_path),
-            context_len=context_len,
-            val_frac=val_frac,
-            steps=steps,
-            batch_size=batch_size,
-            lr=lr,
-            d_model=d_model,
-            n_heads=n_heads,
-            n_layers=n_layers,
-            dropout=dropout,
-            seed=seed,
-            device=device,
-            training_mode=training_mode,
-        )
+        if training_mode == "iid":
+            tr = eval_transformer_on_dataset(
+                model=model,
+                npz_path=str(npz_path),
+                context_len=context_len,
+                val_frac=val_frac,
+                batch_size=batch_size,
+                device=device,
+            )
+        else:
+            tr = train_one_dataset(
+                npz_path=str(npz_path),
+                context_len=context_len,
+                val_frac=val_frac,
+                steps=steps,
+                batch_size=batch_size,
+                lr=lr,
+                d_model=d_model,
+                n_heads=n_heads,
+                n_layers=n_layers,
+                dropout=dropout,
+                seed=seed,
+                device=device_str,
+                training_mode="fixed",
+            )
+
         print(f"transformer: train_rmse={tr['train_rmse']:.4f} val_rmse={tr['val_rmse']:.4f}")
 
         rows.append(
