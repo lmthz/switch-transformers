@@ -137,7 +137,6 @@ def build_exog_for_dataset(dataset_name: str, n_total: int) -> Optional[np.ndarr
 # ================================================================
 # MODEL FITTING
 # ================================================================
-
 def fit_markov_ar(y_train, cfg, exog_train, maxiter, em_iter):
     model = MarkovAutoregression(
         endog=y_train,
@@ -151,10 +150,18 @@ def fit_markov_ar(y_train, cfg, exog_train, maxiter, em_iter):
         switching_variance=cfg.switching_variance,
     )
     try:
-        res = model.fit(maxiter=maxiter, em_iter=em_iter, disp=False)
+        return model.fit(maxiter=maxiter, em_iter=em_iter, disp=False)
     except LinAlgError as e:
-        raise RuntimeError(f"msar fit failed due to LinAlgError: {e}") from e
-    return res
+        print(
+            f"[warning] msar fit hit LinAlgError with em_iter={em_iter} for {cfg.name}: {e}. "
+            "Retrying with em_iter=0."
+        )
+        try:
+            return model.fit(maxiter=maxiter, em_iter=0, disp=False)
+        except LinAlgError as e2:
+            raise RuntimeError(
+                f"msar fit failed due to LinAlgError even after retry with em_iter=0: {e2}"
+            ) from e2
 
 
 # ================================================================
