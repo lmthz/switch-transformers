@@ -104,11 +104,6 @@ def train_one_dataset(
     it = iter(train_loader)
     pbar = tqdm(range(int(steps)), desc="train")
 
-    best_val_rmse = float("inf")
-    best_state = None
-    patience = 10   # in units of 100-step eval intervals
-    patience_count = 0
-
     for step in pbar:
         try:
             x, y, _s = next(it)
@@ -132,18 +127,6 @@ def train_one_dataset(
             pbar.set_postfix(loss=float(loss.item()), val_rmse=float(rmse_v))
             model.train()
 
-            if rmse_v < best_val_rmse:
-                best_val_rmse = rmse_v
-                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-                patience_count = 0
-            else:
-                patience_count += 1
-                if patience_count >= patience:
-                    break
-
-    # restore best checkpoint
-    if best_state is not None:
-        model.load_state_dict({k: v.to(device) for k, v in best_state.items()})
 
     mse_tr, rmse_tr = eval_loop(
         model,
