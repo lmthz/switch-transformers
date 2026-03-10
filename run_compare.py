@@ -66,6 +66,7 @@ def main():
 
         print(f"\n=== {ds} ===")
 
+        msar = None
         try:
             msar = run_msar(
                 ds,
@@ -75,14 +76,13 @@ def main():
                 maxiter=maxiter,
                 em_iter=em_iter,
             )
+            print(
+                f"msar: train_rmse={msar['train_rmse']:.4f} val_rmse={msar['val_rmse']:.4f} "
+                f"regime_acc(train)={msar['regime_accuracy']:.3f} noise_rmse={msar['noise_rmse']:.4f} "
+                f"order={msar.get('selected_order', msar['order'])}"
+            )
         except Exception as e:
-            print(f"[msar] all orders failed for {ds}, skipping: {e}")
-            continue
-        print(
-            f"msar: train_rmse={msar['train_rmse']:.4f} val_rmse={msar['val_rmse']:.4f} "
-            f"regime_acc(train)={msar['regime_accuracy']:.3f} noise_rmse={msar['noise_rmse']:.4f} "
-            f"order={msar.get('selected_order', msar['order'])}"
-        )
+            print(f"[msar] all orders failed for {ds}, skipping msar: {e}")
 
         tr = train_one_dataset(
             npz_path=str(npz_path),
@@ -103,11 +103,11 @@ def main():
         rows.append(
             {
                 "dataset": ds,
-                "msar_order": msar.get("selected_order", msar["order"]),
-                "msar_train_rmse": msar["train_rmse"],
-                "msar_val_rmse": msar["val_rmse"],
-                "msar_regime_acc_train": msar["regime_accuracy"],
-                "noise_rmse": msar["noise_rmse"],
+                "msar_order": msar.get("selected_order", msar["order"]) if msar else float("nan"),
+                "msar_train_rmse": msar["train_rmse"] if msar else float("nan"),
+                "msar_val_rmse": msar["val_rmse"] if msar else float("nan"),
+                "msar_regime_acc_train": msar["regime_accuracy"] if msar else float("nan"),
+                "noise_rmse": msar["noise_rmse"] if msar else float("nan"),
                 "tr_train_rmse": tr["train_rmse"],
                 "tr_val_rmse": tr["val_rmse"],
             }
