@@ -483,7 +483,7 @@ class MSARBatchSampler:
     evaluation datasets.
     """
 
-    _N_FAMILIES = 9
+    _N_FAMILIES = 10
 
     def __init__(self, cfg: MSARSamplerConfig, seed: Optional[int] = None):
         self.cfg = cfg
