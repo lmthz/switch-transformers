@@ -203,12 +203,16 @@ def train_one_dataset(
             persistence_lo=0.85,
             persistence_hi=0.98,
             burn_in=100,
-            mix_ar=0.30,
-            mix_arma=0.20,
-            mix_arima1=0.20,
-            mix_arima2=0.08,
+            mix_ar=0.22,
+            mix_ar_near_unit=0.05,
+            mix_ar_no_switch=0.05,
+            mix_arma=0.13,
+            mix_arima1=0.13,
+            mix_arima2=0.07,
             mix_seasonal=0.12,
-            mix_exog=0.10,
+            mix_exog_const=0.08,
+            mix_exog_sine=0.08,
+            mix_exog_seasonal=0.07,
         )
         sampler = MSARBatchSampler(sampler_cfg, seed=seed)
         train_iid(model, sampler, val_loader, steps, batch_size, lr, device)

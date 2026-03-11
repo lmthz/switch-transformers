@@ -188,6 +188,7 @@ def compute_oracle_arima_rmse(
 
 
 
+def build_exog_for_dataset(dataset_name: str, n_total: int) -> Optional[np.ndarray]:
     t = np.arange(n_total)
 
     if dataset_name == "E1_drift_only":

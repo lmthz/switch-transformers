@@ -83,12 +83,12 @@ def main():
 
     # transformer hyperparams
     context_len = 64
-    steps = 5000
+    steps = 20000
     batch_size = 128
     lr = 3e-4
-    d_model = 128
+    d_model = 256
     n_heads = 4
-    n_layers = 4
+    n_layers = 6
     dropout = 0.1
     seed = 0
     device_str = "cuda"
@@ -124,12 +124,16 @@ def main():
             persistence_lo=0.85,
             persistence_hi=0.98,
             burn_in=100,
-            mix_ar=0.30,
-            mix_arma=0.20,
-            mix_arima1=0.20,
-            mix_arima2=0.08,
+            mix_ar=0.22,
+            mix_ar_near_unit=0.05,
+            mix_ar_no_switch=0.05,
+            mix_arma=0.13,
+            mix_arima1=0.13,
+            mix_arima2=0.07,
             mix_seasonal=0.12,
-            mix_exog=0.10,
+            mix_exog_const=0.08,
+            mix_exog_sine=0.08,
+            mix_exog_seasonal=0.07,
         )
         sampler = MSARBatchSampler(sampler_cfg, seed=seed)
 
