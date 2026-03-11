@@ -118,15 +118,18 @@ def main():
             k_regimes=2,
             ar_coeff_scale=0.6,
             ma_coeff_scale=0.4,
+            sar_coeff_scale=0.35,
             sigma_lo=0.15,
             sigma_hi=0.70,
             persistence_lo=0.85,
             persistence_hi=0.98,
             burn_in=100,
-            mix_ar=0.40,
-            mix_arma=0.25,
-            mix_arima1=0.25,
-            mix_arima2=0.10,
+            mix_ar=0.30,
+            mix_arma=0.20,
+            mix_arima1=0.20,
+            mix_arima2=0.08,
+            mix_seasonal=0.12,
+            mix_exog=0.10,
         )
         sampler = MSARBatchSampler(sampler_cfg, seed=seed)
 
@@ -162,6 +165,7 @@ def main():
             print(
                 f"msar: train_rmse={msar['train_rmse']:.4f} val_rmse={msar['val_rmse']:.4f} "
                 f"regime_acc(train)={msar['regime_accuracy']:.3f} noise_rmse={msar['noise_rmse']:.4f} "
+                f"oracle_model_rmse={msar['oracle_model_rmse']:.4f} "
                 f"order={msar.get('selected_order', msar['order'])}"
             )
         except Exception as e:
@@ -203,6 +207,7 @@ def main():
                 "msar_val_rmse": msar["val_rmse"] if msar else float("nan"),
                 "msar_regime_acc_train": msar["regime_accuracy"] if msar else float("nan"),
                 "noise_rmse": msar["noise_rmse"] if msar else float("nan"),
+                "oracle_model_rmse": msar["oracle_model_rmse"] if msar else float("nan"),
                 "tr_train_rmse": tr["train_rmse"],
                 "tr_val_rmse": tr["val_rmse"],
             }

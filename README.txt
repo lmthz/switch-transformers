@@ -1,6 +1,11 @@
 #SSH into cluster
 ssh <kerb>>@orcd-login.mit.edu
 
+#tmux
+tmux new -s run
+#or
+tmux attach -t run
+
 #get repo
 module load miniforge
 conda create -y -n gitfix git

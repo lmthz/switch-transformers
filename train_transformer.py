@@ -197,15 +197,18 @@ def train_one_dataset(
             k_regimes=2,
             ar_coeff_scale=0.6,
             ma_coeff_scale=0.4,
+            sar_coeff_scale=0.35,
             sigma_lo=0.15,
             sigma_hi=0.70,
             persistence_lo=0.85,
             persistence_hi=0.98,
             burn_in=100,
-            mix_ar=0.40,
-            mix_arma=0.25,
-            mix_arima1=0.25,
-            mix_arima2=0.10,
+            mix_ar=0.30,
+            mix_arma=0.20,
+            mix_arima1=0.20,
+            mix_arima2=0.08,
+            mix_seasonal=0.12,
+            mix_exog=0.10,
         )
         sampler = MSARBatchSampler(sampler_cfg, seed=seed)
         train_iid(model, sampler, val_loader, steps, batch_size, lr, device)

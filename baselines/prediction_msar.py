@@ -97,17 +97,97 @@ ARMA_ARIMA_DATASETS = {
 # IO
 # ================================================================
 
-def load_npz_series(data_dir, dataset_name: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
+def load_npz_series(data_dir, dataset_name: str):
     p = Path(data_dir) / f"{dataset_name}.npz"
     arr = np.load(p, allow_pickle=True)
     y = np.asarray(arr["y"], dtype=float).flatten()
     states = np.asarray(arr["states"], dtype=int).flatten()
     T = np.asarray(arr["T"], dtype=float)
     sigma = arr["sigma"] if "sigma" in arr.files else None
-    return y, states, T, sigma
+    ar    = arr["ar"]    if "ar"    in arr.files else None
+    ma    = arr["ma"]    if "ma"    in arr.files else None
+    eps   = arr["eps"]   if "eps"   in arr.files else None
+    z     = arr["z"]     if "z"     in arr.files else None
+    d     = int(arr["d"]) if "d"   in arr.files else None
+    return y, states, T, sigma, ar, ma, eps, z, d
 
 
-def build_exog_for_dataset(dataset_name: str, n_total: int) -> Optional[np.ndarray]:
+
+
+def compute_oracle_arima_rmse(
+    y: np.ndarray,
+    z: Optional[np.ndarray],
+    eps: Optional[np.ndarray],
+    states: np.ndarray,
+    ar: Optional[np.ndarray],
+    ma: Optional[np.ndarray],
+    d: Optional[int],
+) -> Tuple[float, float]:
+    """
+    Oracle ARIMA(p,d,q) one-step-ahead forecast using true AR/MA parameters,
+    true regimes, and true innovations z / eps.
+    Returns (MSE, RMSE) in the original (unstandardized) y scale.
+    Returns (nan, nan) for non-ARIMA datasets (d is None).
+    """
+    if any(x is None for x in (z, eps, ar, d)):
+        return float("nan"), float("nan")
+
+    y = np.asarray(y, dtype=float)
+    z = np.asarray(z, dtype=float)
+    eps = np.asarray(eps, dtype=float)
+    states = np.asarray(states, dtype=int)
+    ar_arr = np.asarray(ar, dtype=float)
+
+    if ar_arr.ndim != 2:
+        return float("nan"), float("nan")
+
+    if ma is not None:
+        ma_arr = np.asarray(ma, dtype=float)
+        if ma_arr.ndim != 2:
+            return float("nan"), float("nan")
+        q = ma_arr.shape[1]
+    else:
+        ma_arr = None
+        q = 0
+
+    p = ar_arr.shape[1]
+    N = len(y)
+
+    if not (len(z) == N == len(eps) == len(states)):
+        return float("nan"), float("nan")
+
+    start = max(p, q)
+    d_int = int(d)
+
+    # for d>=2, reconstruct first integrated layer
+    y1_true = np.cumsum(z) if d_int >= 2 else None
+
+    errors: List[float] = []
+    for t in range(start, N):
+        k = states[t]
+        z_hat_t = float(np.dot(ar_arr[k], z[t - np.arange(1, p + 1)])) if p > 0 else 0.0
+        if q > 0 and ma_arr is not None:
+            z_hat_t += float(np.dot(ma_arr[k], eps[t - np.arange(1, q + 1)]))
+
+        if d_int == 1:
+            y_hat_t = y[t - 1] + z_hat_t
+        elif d_int >= 2:
+            y1_hat_t = y1_true[t - 1] + z_hat_t
+            y_hat_t = y[t - 1] + y1_hat_t
+        else:
+            y_hat_t = y[t - 1] + z_hat_t
+
+        errors.append(y[t] - y_hat_t)
+
+    if not errors:
+        return float("nan"), float("nan")
+
+    errors_arr = np.asarray(errors, dtype=float)
+    mse = float(np.mean(errors_arr ** 2))
+    return mse, float(np.sqrt(mse))
+
+
+
     t = np.arange(n_total)
 
     if dataset_name == "E1_drift_only":
@@ -289,7 +369,7 @@ def evaluate_msar_fixed_order(
     maxiter: int,
     em_iter: int,
 ) -> Dict[str, Any]:
-    y_raw, true_states, T, sigma = load_npz_series(data_dir, dataset_name)
+    y_raw, true_states, T, sigma, ar, ma, eps, z, d = load_npz_series(data_dir, dataset_name)
     n = len(y_raw)
     n_train, n_val = train_val_split_indices(n, val_frac)
 
@@ -338,6 +418,15 @@ def evaluate_msar_fixed_order(
             acc_dict = label_corrected_accuracy(dec_train[valid], true_train[valid], cfg.k_regimes)
             acc = float(acc_dict["acc"])
 
+    # oracle ARIMA rmse (only meaningful for ARIMA datasets where d, z, eps are saved)
+    if d is not None and z is not None and eps is not None and ar is not None:
+        _, oracle_rmse_raw = compute_oracle_arima_rmse(
+            y=y_raw, z=z, eps=eps, states=true_states, ar=ar, ma=ma, d=d,
+        )
+        oracle_model_rmse = float(oracle_rmse_raw / std) if np.isfinite(oracle_rmse_raw) and std > 0 else float("nan")
+    else:
+        oracle_model_rmse = float("nan")
+
     # oracle noise floor in standardized units
     if sigma is not None:
         sigma_vec = np.asarray(sigma, dtype=float).flatten() / std
@@ -361,6 +450,7 @@ def evaluate_msar_fixed_order(
         "per_regime_rmse_train": per_reg_train,
         "per_regime_rmse_val": per_reg_val,
         "noise_rmse": float(noise_rmse),
+        "oracle_model_rmse": oracle_model_rmse,
         "n": int(n),
         "n_train": int(n_train),
         "n_val": int(n_val),
