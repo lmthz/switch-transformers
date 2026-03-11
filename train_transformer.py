@@ -56,6 +56,52 @@ def eval_loop(
 
 
 # ============================================================
+# Prefetch queue — generates batches on CPU in background threads
+# while GPU does forward/backward, hiding most of the sampler cost.
+# ============================================================
+
+import queue
+import threading
+
+def _prefetch_worker(
+    sampler: "MSARBatchSampler",
+    batch_size: int,
+    context_len: int,
+    q: "queue.Queue",
+    stop_event: "threading.Event",
+) -> None:
+    """
+    Background thread: generates numpy batches and puts them in the queue.
+    Stays ahead of the training loop by keeping the queue full.
+    Numpy releases the GIL during C-level computation so multiple threads
+    can generate series in parallel with the GPU doing forward/backward.
+    """
+    while not stop_event.is_set():
+        # sample_batch returns tensors on device — we want numpy here so
+        # we temporarily redirect to CPU and return raw arrays
+        xs = []
+        ys = []
+        while len(xs) < batch_size:
+            series = sampler._sample_one_series()
+            if not np.isfinite(series).all() or series.std() < 1e-6:
+                continue
+            max_start = len(series) - context_len - 1
+            if max_start <= 0:
+                continue
+            start = sampler.rng.integers(0, max_start)
+            ctx = series[start: start + context_len].astype(np.float32)
+            tgt = series[start + context_len].astype(np.float32)
+            if not (np.isfinite(ctx).all() and np.isfinite(tgt)):
+                continue
+            xs.append(ctx)
+            ys.append(tgt)
+        try:
+            q.put((np.stack(xs), np.array(ys, dtype=np.float32)), timeout=5)
+        except queue.Full:
+            pass  # training loop is behind — drop and regenerate
+
+
+# ============================================================
 # Garg-style iid training
 # ============================================================
 
@@ -67,30 +113,57 @@ def train_iid(
     batch_size: int,
     lr: float,
     device: torch.device,
+    n_prefetch_workers: int = 3,
+    prefetch_queue_size: int = 8,
 ) -> None:
     """
     Train on fresh synthetic MSAR series every step.
     No fixed dataset, no memorization possible.
     val_loader used only for monitoring — no gradients flow from it.
+
+    n_prefetch_workers background threads generate batches on CPU while
+    the GPU runs forward/backward, hiding most of the sampler latency.
     """
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     loss_fn = torch.nn.MSELoss()
     context_len = model.cfg.context_len
 
-    pbar = tqdm(range(steps), desc="train (iid)")
-    for step in pbar:
-        x, y = sampler.sample_batch(batch_size, context_len, device)
+    # spin up background workers
+    q: queue.Queue = queue.Queue(maxsize=prefetch_queue_size)
+    stop_event = threading.Event()
+    workers = []
+    for _ in range(n_prefetch_workers):
+        t = threading.Thread(
+            target=_prefetch_worker,
+            args=(sampler, batch_size, context_len, q, stop_event),
+            daemon=True,
+        )
+        t.start()
+        workers.append(t)
 
-        opt.zero_grad(set_to_none=True)
-        yhat = model(x)
-        loss = loss_fn(yhat, y)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        opt.step()
+    try:
+        pbar = tqdm(range(steps), desc="train (iid)")
+        for step in pbar:
+            # get next pre-generated batch and move to GPU
+            xs_np, ys_np = q.get(timeout=60)
+            x = torch.from_numpy(xs_np).unsqueeze(-1).to(device)
+            y = torch.from_numpy(ys_np).unsqueeze(-1).to(device)
 
-        if step % 100 == 0 or step == steps - 1:
-            _, rmse_v = eval_loop(model, val_loader, device=device)
-            pbar.set_postfix(loss=float(loss.item()), val_rmse=float(rmse_v))
+            opt.zero_grad(set_to_none=True)
+            yhat = model(x)
+            loss = loss_fn(yhat, y)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+
+            if step % 100 == 0 or step == steps - 1:
+                _, rmse_v = eval_loop(model, val_loader, device=device)
+                pbar.set_postfix(loss=float(loss.item()), val_rmse=float(rmse_v))
+    finally:
+        # always shut down workers cleanly even if training crashes
+        stop_event.set()
+        for t in workers:
+            t.join(timeout=5)
 
 
 # ============================================================
