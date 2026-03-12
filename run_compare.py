@@ -83,7 +83,7 @@ def main():
 
     # transformer hyperparams
     context_len = 64
-    steps = 20000
+    steps = 14000
     batch_size = 128
     lr = 3e-4
     d_model = 256
