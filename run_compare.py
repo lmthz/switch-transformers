@@ -73,6 +73,18 @@ def eval_transformer_on_dataset(
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Compare MSAR baseline vs transformer.")
+    ap.add_argument(
+        "--pool_path", type=str, default=None,
+        help=(
+            "Path to pre-generated series pool .npz file from generate_pool.py. "
+            "If provided, sampler draws from this pool instead of generating on the fly, "
+            "removing CPU generation overhead from the GPU training loop."
+        ),
+    )
+    args = ap.parse_args()
+
     data_dir = "generated_data"
     val_frac = 0.3
 
@@ -136,6 +148,10 @@ def main():
             mix_exog_seasonal=0.07,
         )
         sampler = MSARBatchSampler(sampler_cfg, seed=seed)
+
+        # Load pre-generated pool if path provided — removes generation overhead
+        if args.pool_path is not None:
+            sampler.load_pool(args.pool_path)
 
         # use first dataset's val split for monitoring during training
         first_npz = str(Path(data_dir) / f"{DATASETS[0]}.npz")

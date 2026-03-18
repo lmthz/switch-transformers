@@ -1,28 +1,61 @@
-#SSH into cluster
-ssh <kerb>>@orcd-login.mit.edu
+# ================================================================
+# DAILY USE
+# ================================================================
 
-#tmux
-tmux new -s run
-#or
+# SSH into cluster
+ssh <kerb>@orcd-login.mit.edu
+
+# Start or reattach tmux session
+tmux new -s run        # first time
+tmux attach -t run     # returning
+
+# Submit job (from login node, inside tmux)
+cd switch-transformers
+git pull
+mkdir -p logs
+sbatch scripts/run_compare.sbatch
+
+# Watch output (replace with your actual job id)
+tail -f logs/switchtr_<jobid>.out
+
+# Detach and leave running
+Ctrl+b d
+
+# Come back later
+ssh <kerb>@orcd-login.mit.edu
 tmux attach -t run
 
-#get repo
+# Other useful commands
+squeue -u <kerb>                   # check job status
+scancel <jobid>                    # cancel job
+tail -f logs/switchtr_<jobid>.out  # reattach to output
+
+
+# ================================================================
+# INITIAL SETUP (one time only)
+# ================================================================
+
+ssh <kerb>@orcd-login.mit.edu
+tmux new -s run
+
+# Clone repo using a conda git environment
 module load miniforge
 conda create -y -n gitfix git
 conda activate gitfix
 git clone https://github.com/lmthz/switch-transformers
 cd switch-transformers
 
-#request gpu example
-salloc -p mit_normal_gpu --gres=gpu:1 --cpus-per-task=4 --mem=16G -t 07:00:00
-
-#setup env and dependencies
+# Set up main environment
 conda create -y -n switchgpu python=3.10
 conda activate switchgpu
 pip install -r requirements.txt
 
 #generate data
-python data_generation.py
+python data_generation.py 
 
-#run comparison
-python run_compare.py
+# Submit — sbatch script handles data generation and pool generation automatically
+mkdir -p logs
+sbatch scripts/run_compare.sbatch
+
+# Watch output
+tail -f logs/switchtr_<jobid>.out

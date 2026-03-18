@@ -365,6 +365,13 @@ class MSARBatchSampler:
     """
     Generates batches of B series simultaneously using vectorized numpy ops.
     No Python loop over batch_size — entire batch generated in one shot.
+
+    Two modes:
+      On-the-fly (default): generates fresh synthetic series every call.
+      Pool mode: loads a pre-generated pool from disk (via load_pool()) and
+                 draws random series from it. Removes all CPU generation
+                 overhead from the GPU training loop — series are already
+                 in memory, sample_batch just does a random index lookup.
     """
 
     _N_FAMILIES = 10
@@ -379,6 +386,34 @@ class MSARBatchSampler:
         ])
         assert abs(self._mix_weights.sum() - 1.0) < 1e-6, \
             f"mix weights must sum to 1, got {self._mix_weights.sum()}"
+        self._pool: Optional[np.ndarray] = None   # set by load_pool()
+
+    def load_pool(self, pool_path: str) -> None:
+        """
+        Load a pre-generated series pool from disk into memory.
+        After calling this, sample_batch draws from the pool instead
+        of generating series on the fly.
+
+        The pool file must have been created by generate_pool.py.
+        Prints a summary of what was loaded.
+
+        Args:
+            pool_path: path to the .npz file produced by generate_pool.py
+        """
+        print(f"Loading series pool from {pool_path} ...")
+        data = np.load(pool_path)
+        self._pool = data["series"]          # (N, usable_len) float32
+        n, usable_len = self._pool.shape
+
+        # Warn if pool series are shorter than context_len requires
+        # (not an error yet — will raise clearly in sample_batch if needed)
+        print(
+            f"Pool loaded: {n:,} series  x  {usable_len} timesteps  "
+            f"dtype={self._pool.dtype}  "
+            f"({self._pool.nbytes / 1e6:.0f} MB in memory)"
+        )
+        if "seed" in data:
+            print(f"Pool seed: {int(data['seed'])}")
 
     def _simulate_batch(self, family: int, B: int) -> np.ndarray:
         fns = [
@@ -395,6 +430,15 @@ class MSARBatchSampler:
         ]
         return fns[family](B)
 
+    def _sample_series_from_pool(self, batch_size: int) -> np.ndarray:
+        """
+        Draw batch_size random series from the pre-loaded pool.
+        Returns (batch_size, usable_len) float32 array.
+        """
+        n_pool = self._pool.shape[0]
+        idx = self.rng.integers(0, n_pool, size=batch_size)
+        return self._pool[idx]   # numpy fancy index — fast, no copy if contiguous
+
     def sample_batch(
         self,
         batch_size: int,
@@ -403,21 +447,36 @@ class MSARBatchSampler:
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Generate batch_size (x, y) pairs.
-        All series generated simultaneously; windows extracted via vectorized indexing.
+
+        Pool mode (load_pool() called):
+            Draws batch_size series from the in-memory pool via random index.
+            No generation overhead — CPU work is ~microseconds.
+
+        On-the-fly mode (default):
+            Generates all series simultaneously via vectorized numpy ops.
         """
-        while True:
-            family = self.rng.choice(self._N_FAMILIES, p=self._mix_weights)
-            candidate = self._simulate_batch(family, batch_size + 8)
-            valid = np.isfinite(candidate).all(axis=1) & (candidate.std(axis=1) > 1e-6)
-            if valid.sum() >= batch_size:
-                series = candidate[valid][:batch_size]
-                break
+        if self._pool is not None:
+            # ── Pool mode ──────────────────────────────────────────────────
+            series = self._sample_series_from_pool(batch_size)
+        else:
+            # ── On-the-fly mode ────────────────────────────────────────────
+            while True:
+                family = self.rng.choice(self._N_FAMILIES, p=self._mix_weights)
+                candidate = self._simulate_batch(family, batch_size + 8)
+                valid = np.isfinite(candidate).all(axis=1) & (candidate.std(axis=1) > 1e-6)
+                if valid.sum() >= batch_size:
+                    series = candidate[valid][:batch_size]
+                    break
 
         series_len = series.shape[1]
         max_start  = series_len - context_len - 1
         if max_start <= 0:
-            raise ValueError(f"series_len={series_len} too short for context_len={context_len}")
+            raise ValueError(
+                f"series_len={series_len} too short for context_len={context_len}. "
+                f"{'Pool series are too short — regenerate with larger series_len.' if self._pool is not None else 'Increase cfg.series_len.'}"
+            )
 
+        # Vectorized window extraction — same for both modes
         bi     = np.arange(batch_size)
         starts = self.rng.integers(0, max_start, size=batch_size)
         t_idx  = starts[:, None] + np.arange(context_len)[None, :]   # (B, L)
