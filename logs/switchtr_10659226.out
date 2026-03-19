@@ -1,0 +1,5 @@
+=== Environment ===
+cuda: True | devices: 1
+
+=== Step 1: Evaluation datasets already exist, skipping ===
+=== Step 2: Generating series pool (CPU, ~15 min) ===
