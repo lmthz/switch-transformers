@@ -1,7 +1,3 @@
-# ================================================================
-# DAILY USE
-# ================================================================
-
 # SSH into cluster
 ssh <kerb>@orcd-login.mit.edu
 
@@ -11,7 +7,9 @@ tmux attach -t run     # returning
 
 # Submit job (from login node, inside tmux)
 cd switch-transformers
+conda activate gitfix
 git pull
+conda activate switchgpu
 mkdir -p logs
 sbatch scripts/run_compare.sbatch
 
@@ -55,6 +53,7 @@ python data_generation.py
 
 # Submit — sbatch script handles data generation and pool generation automatically
 mkdir -p logs
+python generate_pool.py --n_series 500000 --out series_pool.npz
 sbatch scripts/run_compare.sbatch
 
 # Watch output

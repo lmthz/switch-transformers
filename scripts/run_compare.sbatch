@@ -39,7 +39,7 @@ if [ -f "$POOL" ]; then
     echo "=== Step 2: Pool already exists at $POOL, skipping generation ==="
 else
     echo "=== Step 2: Generating series pool (CPU, ~15 min) ==="
-    python generate_pool.py --n_series 500000 --out "$POOL"
+    python data/generate_pool.py --n_series 500000 --out "$POOL"
 fi
 echo ""
 
