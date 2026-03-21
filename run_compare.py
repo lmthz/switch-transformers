@@ -49,26 +49,23 @@ def eval_transformer_on_dataset(
     batch_size: int,
     device: torch.device,
 ) -> Dict[str, Any]:
-    """
-    Evaluate a pre-trained model on one dataset via in-context forward passes.
-    No training, no fine-tuning — just forward passes with dataset windows as context.
-    """
+    """Evaluate a pre-trained model on one dataset via forward passes only."""
     ds_train, ds_val, stdzr, _ = make_train_val_datasets(
         npz_path=npz_path,
         context_len=context_len,
         val_frac=val_frac,
     )
     train_loader = DataLoader(ds_train, batch_size=batch_size, shuffle=False)
-    val_loader = DataLoader(ds_val, batch_size=batch_size, shuffle=False)
+    val_loader   = DataLoader(ds_val,   batch_size=batch_size, shuffle=False)
 
     _, train_rmse = eval_loop(model, train_loader, device)
-    _, val_rmse = eval_loop(model, val_loader, device)
+    _, val_rmse   = eval_loop(model, val_loader,   device)
 
     return {
         "train_rmse": float(train_rmse),
-        "val_rmse": float(val_rmse),
-        "n_train": len(ds_train),
-        "n_val": len(ds_val),
+        "val_rmse":   float(val_rmse),
+        "n_train":    len(ds_train),
+        "n_val":      len(ds_val),
     }
 
 
@@ -77,10 +74,29 @@ def main():
     ap = argparse.ArgumentParser(description="Compare MSAR baseline vs transformer.")
     ap.add_argument(
         "--pool_path", type=str, default=None,
+        help="Path to pre-generated series pool .npz from generate_pool.py.",
+    )
+    ap.add_argument(
+        "--dense_supervision", action="store_true",
+        help="Train with dense supervision: predict at every position, not just last.",
+    )
+    ap.add_argument(
+        "--ar_coeff_scale", type=float, default=0.6,
         help=(
-            "Path to pre-generated series pool .npz file from generate_pool.py. "
-            "If provided, sampler draws from this pool instead of generating on the fly, "
-            "removing CPU generation overhead from the GPU training loop."
+            "Scale for AR coefficient sampling in the training prior. "
+            "Default 0.6 — coefficients drawn from [-scale, scale]. "
+            "Set higher (e.g. 1.2) to cover evaluation datasets with large coefficients."
+        ),
+    )
+    ap.add_argument(
+        "--steps", type=int, default=22000,
+        help="Number of iid training steps (default: 22000).",
+    )
+    ap.add_argument(
+        "--experiment_name", type=str, default=None,
+        help=(
+            "Label for this run. Results saved to results_<name>.csv. "
+            "If not set, results are only printed to stdout."
         ),
     )
     args = ap.parse_args()
@@ -90,28 +106,35 @@ def main():
 
     # msar hyperparams
     candidate_orders = [2, 3, 4, 5, 6, 8, 10]
-    maxiter = 150
-    em_iter = 10
+    maxiter  = 150
+    em_iter  = 10
 
     # transformer hyperparams
     context_len = 64
-    steps = 200000
-    batch_size = 128
-    lr = 3e-4
-    d_model = 256
-    n_heads = 4
-    n_layers = 6
-    dropout = 0.1
-    seed = 0
-    device_str = "cuda"
+    steps       = args.steps
+    batch_size  = 128
+    lr          = 3e-4
+    d_model     = 256
+    n_heads     = 4
+    n_layers    = 6
+    dropout     = 0.1
+    seed        = 0
+    device_str  = "cuda"
     training_mode = "iid"
+
+    # log experiment config clearly
+    print(f"\n{'='*60}")
+    print(f"Experiment: {args.experiment_name or 'unnamed'}")
+    print(f"  steps={steps}  dense_supervision={args.dense_supervision}  ar_coeff_scale={args.ar_coeff_scale}")
+    print(f"  pool_path={args.pool_path}")
+    print(f"{'='*60}\n")
 
     device = resolve_device(device_str)
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     # --------------------------------------------------------
-    # Train transformer once if iid mode
+    # Train transformer once (iid mode)
     # --------------------------------------------------------
     if training_mode == "iid":
         print("=== Training transformer (iid, single run) ===")
@@ -121,6 +144,7 @@ def main():
             n_heads=n_heads,
             n_layers=n_layers,
             dropout=dropout,
+            dense_supervision=args.dense_supervision,
         )
         model = CausalTransformerForecaster(cfg).to(device)
         model.train()
@@ -128,7 +152,7 @@ def main():
         sampler_cfg = MSARSamplerConfig(
             series_len=max(512, context_len * 4),
             k_regimes=2,
-            ar_coeff_scale=0.6,
+            ar_coeff_scale=args.ar_coeff_scale,
             ma_coeff_scale=0.4,
             sar_coeff_scale=0.35,
             sigma_lo=0.15,
@@ -149,11 +173,9 @@ def main():
         )
         sampler = MSARBatchSampler(sampler_cfg, seed=seed)
 
-        # Load pre-generated pool if path provided — removes generation overhead
         if args.pool_path is not None:
             sampler.load_pool(args.pool_path)
 
-        # use first dataset's val split for monitoring during training
         first_npz = str(Path(data_dir) / f"{DATASETS[0]}.npz")
         _, ds_val_monitor, _, _ = make_train_val_datasets(first_npz, context_len, val_frac)
         val_loader_monitor = DataLoader(ds_val_monitor, batch_size=batch_size, shuffle=False)
@@ -167,7 +189,7 @@ def main():
     for ds in DATASETS:
         npz_path = Path(data_dir) / f"{ds}.npz"
         if not npz_path.exists():
-            print(f"[missing] {npz_path} does not exist. run: python data_generation.py")
+            print(f"[missing] {npz_path} — run: python data_generation.py")
             return
 
         print(f"\n=== {ds} ===")
@@ -189,7 +211,7 @@ def main():
                 f"order={msar.get('selected_order', msar['order'])}"
             )
         except Exception as e:
-            print(f"[msar] all orders failed for {ds}, skipping msar: {e}")
+            print(f"[msar] all orders failed for {ds}: {e}")
 
         if training_mode == "iid":
             tr = eval_transformer_on_dataset(
@@ -215,27 +237,33 @@ def main():
                 seed=seed,
                 device=device_str,
                 training_mode="fixed",
+                dense_supervision=args.dense_supervision,
+                ar_coeff_scale=args.ar_coeff_scale,
             )
 
         print(f"transformer: train_rmse={tr['train_rmse']:.4f} val_rmse={tr['val_rmse']:.4f}")
 
-        rows.append(
-            {
-                "dataset": ds,
-                "msar_order": msar.get("selected_order", msar["order"]) if msar else float("nan"),
-                "msar_train_rmse": msar["train_rmse"] if msar else float("nan"),
-                "msar_val_rmse": msar["val_rmse"] if msar else float("nan"),
-                "msar_regime_acc_train": msar["regime_accuracy"] if msar else float("nan"),
-                "noise_rmse": msar["noise_rmse"] if msar else float("nan"),
-                "oracle_model_rmse": msar["oracle_model_rmse"] if msar else float("nan"),
-                "tr_train_rmse": tr["train_rmse"],
-                "tr_val_rmse": tr["val_rmse"],
-            }
-        )
+        rows.append({
+            "dataset":              ds,
+            "msar_order":           msar.get("selected_order", msar["order"]) if msar else float("nan"),
+            "msar_train_rmse":      msar["train_rmse"]       if msar else float("nan"),
+            "msar_val_rmse":        msar["val_rmse"]         if msar else float("nan"),
+            "msar_regime_acc_train":msar["regime_accuracy"]  if msar else float("nan"),
+            "noise_rmse":           msar["noise_rmse"]       if msar else float("nan"),
+            "oracle_model_rmse":    msar["oracle_model_rmse"]if msar else float("nan"),
+            "tr_train_rmse":        tr["train_rmse"],
+            "tr_val_rmse":          tr["val_rmse"],
+        })
 
     df = pd.DataFrame(rows)
     print("\nsummary table")
     print(df.to_string(index=False))
+
+    # Save results to CSV if experiment name provided
+    if args.experiment_name:
+        out_path = f"results_{args.experiment_name}.csv"
+        df.to_csv(out_path, index=False)
+        print(f"\nResults saved to {out_path}")
 
 
 if __name__ == "__main__":
