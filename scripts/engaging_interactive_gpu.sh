@@ -3,7 +3,7 @@ set -euo pipefail
 
 GPUS=${GPUS:-1}
 CPUS=${CPUS:-4}
-MEM=${MEM:-16G}
+MEM=${MEM:-32G}
 TIME=${TIME:-06:00:00}
 
 echo "requesting interactive session"
