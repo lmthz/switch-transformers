@@ -7,7 +7,6 @@ tmux attach -t run     # returning
 
 # Submit job (from login node, inside tmux)
 cd switch-transformers
-conda activate gitfix
 git pull
 conda activate switchgpu
 mkdir -p logs

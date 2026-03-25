@@ -1,17 +1,9 @@
 # generate_pool.py
 """
-Pre-generate a pool of synthetic MSAR series and save to disk.
-Run this on the LOGIN NODE (no GPU needed) before requesting a GPU allocation.
-Training then loads series from the pool instead of generating on the fly,
-removing all CPU generation overhead from the GPU training loop.
-
 Usage:
-    python generate_pool.py                        # defaults: 500k series, series_len=512
-    python generate_pool.py --n_series 200000      # smaller pool, faster to generate
-    python generate_pool.py --out pool_large.npz   # custom output path
-
-Typical time: ~10-20 minutes for 500k series on a login node CPU.
-Output file size: ~500k * 412 * 4 bytes ≈ ~800 MB for default settings.
+    python generate_pool.py                               # defaults
+    python generate_pool.py --n_series 200000             # smaller pool
+    python generate_pool.py --ar_coeff_scale 1.2 --out series_pool_wide.npz
 """
 from __future__ import annotations
 
@@ -30,27 +22,29 @@ def generate_pool(
     burn_in: int,
     seed: int,
     out_path: str,
-    chunk_size: int = 512,   # generate this many series at a time
+    chunk_size: int = 512,
+    ar_coeff_scale: float = 0.6,
 ) -> None:
     """
     Generate n_series synthetic series and save to a single .npz file.
 
-    The pool is a (n_series, usable_len) float32 array where
-    usable_len = series_len - burn_in (burn-in already discarded by sampler).
-
     Args:
-        n_series:   total number of series to generate
-        series_len: length of each series before burn-in discard
-        burn_in:    burn-in steps discarded inside each simulator
-        seed:       RNG seed for reproducibility
-        out_path:   path to save the .npz file
-        chunk_size: number of series to generate per batch (controls memory)
+        n_series:       total number of series to generate
+        series_len:     length of each series before burn-in discard
+        burn_in:        burn-in steps discarded inside each simulator
+        seed:           RNG seed for reproducibility
+        out_path:       path to save the .npz file
+        chunk_size:     series generated per internal batch
+        ar_coeff_scale: AR coefficient scale. Coefficients drawn from
+                        [-scale, scale] subject to stability constraint.
+                        Default 0.6. Use 1.2 to cover evaluation datasets
+                        with larger coefficients like A1 regime 1.
     """
     cfg = MSARSamplerConfig(
         series_len=series_len,
         burn_in=burn_in,
         k_regimes=2,
-        ar_coeff_scale=0.6,
+        ar_coeff_scale=ar_coeff_scale,
         ma_coeff_scale=0.4,
         sar_coeff_scale=0.35,
         sigma_lo=0.15,
@@ -70,13 +64,14 @@ def generate_pool(
     )
     sampler = MSARBatchSampler(cfg, seed=seed)
 
-    usable_len = series_len - burn_in  # each simulator discards burn_in internally
+    usable_len = series_len - burn_in
     pool = np.empty((n_series, usable_len), dtype=np.float32)
 
     n_generated = 0
     t0 = time.time()
 
-    print(f"Generating {n_series:,} series  (series_len={series_len}, burn_in={burn_in})")
+    print(f"Generating {n_series:,} series  "
+          f"(series_len={series_len}, burn_in={burn_in}, ar_coeff_scale={ar_coeff_scale})")
     print(f"Each series has {usable_len} usable timesteps after burn-in.")
     print(f"Output: {out_path}")
     print()
@@ -84,8 +79,6 @@ def generate_pool(
     while n_generated < n_series:
         this_chunk = min(chunk_size, n_series - n_generated)
 
-        # Generate chunk_size series at once using vectorized batch simulators.
-        # We call _simulate_batch directly since we want raw series not windows.
         while True:
             family = sampler.rng.choice(sampler._N_FAMILIES, p=sampler._mix_weights)
             candidate = sampler._simulate_batch(family, this_chunk + 8)
@@ -101,7 +94,6 @@ def generate_pool(
         if chunk.shape[1] > usable_len:
             chunk = chunk[:, :usable_len]
         elif chunk.shape[1] < usable_len:
-            # pad with last value (rare edge case for very short seasonal series)
             pad = np.repeat(chunk[:, -1:], usable_len - chunk.shape[1], axis=1)
             chunk = np.concatenate([chunk, pad], axis=1)
 
@@ -121,7 +113,6 @@ def generate_pool(
     elapsed = time.time() - t0
     print(f"\n\nGeneration complete in {elapsed:.1f}s  ({n_series/elapsed:.0f} series/s)")
 
-    # Save pool and metadata so the sampler can verify compatibility at load time
     print(f"Saving to {out_path} ...")
     np.savez_compressed(
         out_path,
@@ -130,6 +121,7 @@ def generate_pool(
         series_len=np.array(series_len),
         burn_in=np.array(burn_in),
         seed=np.array(seed),
+        ar_coeff_scale=np.array(ar_coeff_scale),
     )
 
     size_mb = Path(out_path).stat().st_size / 1e6
@@ -141,29 +133,15 @@ def main():
     ap = argparse.ArgumentParser(
         description="Pre-generate synthetic MSAR series pool for training."
     )
+    ap.add_argument("--n_series",       type=int,   default=500_000)
+    ap.add_argument("--series_len",     type=int,   default=512)
+    ap.add_argument("--burn_in",        type=int,   default=100)
+    ap.add_argument("--seed",           type=int,   default=42)
+    ap.add_argument("--out",            type=str,   default="series_pool.npz")
+    ap.add_argument("--chunk_size",     type=int,   default=512)
     ap.add_argument(
-        "--n_series", type=int, default=500_000,
-        help="Number of series to generate (default: 500000)"
-    )
-    ap.add_argument(
-        "--series_len", type=int, default=512,
-        help="Length of each series before burn-in (default: 512)"
-    )
-    ap.add_argument(
-        "--burn_in", type=int, default=100,
-        help="Burn-in steps discarded per series (default: 100)"
-    )
-    ap.add_argument(
-        "--seed", type=int, default=42,
-        help="RNG seed for reproducibility (default: 42)"
-    )
-    ap.add_argument(
-        "--out", type=str, default="series_pool.npz",
-        help="Output file path (default: series_pool.npz)"
-    )
-    ap.add_argument(
-        "--chunk_size", type=int, default=512,
-        help="Series generated per internal batch (default: 512)"
+        "--ar_coeff_scale", type=float, default=0.6,
+        help="AR coefficient scale (default 0.6). Use 1.2 to cover large coefficients."
     )
     args = ap.parse_args()
 
@@ -174,6 +152,7 @@ def main():
         seed=args.seed,
         out_path=args.out,
         chunk_size=args.chunk_size,
+        ar_coeff_scale=args.ar_coeff_scale,
     )
 
 
