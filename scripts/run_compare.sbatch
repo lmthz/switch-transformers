@@ -45,12 +45,11 @@ if [ -f "$POOL_WIDE" ]; then
     echo "=== Wide pool already exists at $POOL_WIDE, skipping ==="
 else
     echo "=== Generating wide pool (ar_coeff_scale=1.2) on compute node CPUs ==="
-    echo "    GPU is idle during this step (~15 min)"
     python generate_pool.py --n_series 500000 --ar_coeff_scale 1.2 --out "$POOL_WIDE"
 fi
 echo ""
 
-echo "=== EXPERIMENT 1: baseline ==="
+echo "=== EXPERIMENT 1: baseline (decoder-only, ar_coeff_scale=0.6) ==="
 python run_compare.py \
     --pool_path "$POOL" \
     --steps 22000 \
@@ -58,16 +57,7 @@ python run_compare.py \
     --experiment_name baseline || echo "[WARNING] baseline failed, continuing"
 echo ""
 
-echo "=== EXPERIMENT 2: dense_supervision ==="
-python run_compare.py \
-    --pool_path "$POOL" \
-    --steps 22000 \
-    --ar_coeff_scale 0.6 \
-    --dense_supervision \
-    --experiment_name dense_supervision || echo "[WARNING] dense_supervision failed, continuing"
-echo ""
-
-echo "=== EXPERIMENT 3: wider_coeffs (ar_coeff_scale=1.2, pool regenerated) ==="
+echo "=== EXPERIMENT 2: wider_coeffs (decoder-only, ar_coeff_scale=1.2) ==="
 python run_compare.py \
     --pool_path "$POOL_WIDE" \
     --steps 22000 \
@@ -76,4 +66,4 @@ python run_compare.py \
 echo ""
 
 echo "=== All experiments complete ==="
-echo "Results: results_baseline.csv  results_dense_supervision.csv  results_wider_coeffs.csv"
+echo "Results: results_baseline.csv  results_wider_coeffs.csv"

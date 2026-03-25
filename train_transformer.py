@@ -31,22 +31,26 @@ def resolve_device(device_str: str) -> torch.device:
 
 
 # ============================================================
-# Eval loop — always uses last position prediction
+# Eval loop — always uses last position (predict_next)
 # ============================================================
 
 @torch.no_grad()
 def eval_loop(
-    model: torch.nn.Module,
+    model: CausalTransformerForecaster,
     loader: DataLoader,
     device: torch.device,
 ) -> Tuple[float, float]:
+    """
+    Evaluate model on a DataLoader. Uses predict_next() which returns
+    only the last position forecast — correct for one-step-ahead evaluation
+    regardless of how the model was trained.
+    """
     model.eval()
     errs: List[np.ndarray] = []
     for x, y, _s in loader:
         x = x.to(device)
         y = y.to(device)
-        # Use predict_last so eval works correctly in both dense and standard modes
-        yhat = model.predict_last(x)
+        yhat = model.predict_next(x)   # (B, 1)
         e = (y - yhat).detach().cpu().numpy().reshape(-1)
         errs.append(e)
     model.train()
@@ -57,7 +61,7 @@ def eval_loop(
 
 
 # ============================================================
-# Garg-style iid training
+# Decoder-style iid training (dense next-step supervision)
 # ============================================================
 
 def train_iid(
@@ -70,42 +74,37 @@ def train_iid(
     device: torch.device,
 ) -> None:
     """
-    Train on fresh synthetic MSAR series every step.
+    Decoder-style training on fresh synthetic MSAR series.
 
-    Standard mode: one prediction per window (last position), one MSE loss.
+    At every step:
+      - Sample batch_size series windows: x (B, L, 1), y (B, 1)
+      - Build target sequence y_seq (B, L, 1):
+          positions 0..L-2: predict the next value already in the context (x[:, 1:, :])
+          position L-1:     predict the true next value y
+      - Forward pass returns predictions at all L positions: yhat (B, L, 1)
+      - Loss = mean MSE over all L predictions (dense supervision)
 
-    Dense supervision mode: predict at every position simultaneously.
-      y_seq is constructed from the context window itself:
-        - positions 0..L-2: predict the next value already in the context
-        - position L-1: predicts the true next value (same as standard target y)
-      Loss = mean MSE across all L predictions.
-      This gives L times more gradient signal per forward pass at no extra cost
-      since the hidden states at all positions are already computed.
+    This is equivalent to GPT-style next-token prediction training.
+    Gives L times more gradient signal per forward pass than supervising
+    only the final position, at negligible extra compute cost.
     """
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     loss_fn = torch.nn.MSELoss()
     context_len = model.cfg.context_len
-    dense = model.cfg.dense_supervision
 
-    pbar = tqdm(range(steps), desc="train (iid)")
+    pbar = tqdm(range(steps), desc="train (iid, decoder)")
     for step in pbar:
         x, y = sampler.sample_batch(batch_size, context_len, device)
         # x: (B, L, 1),  y: (B, 1)
 
+        # Build dense target: shift x forward by 1, append true next value
+        # y_seq[:, t, :] = x[:, t+1, :] for t < L-1
+        # y_seq[:, L-1, :] = y
+        y_seq = torch.cat([x[:, 1:, :], y.unsqueeze(1)], dim=1)  # (B, L, 1)
+
         opt.zero_grad(set_to_none=True)
-
-        if dense:
-            # Build target sequence: position t predicts x[t+1] for t < L-1,
-            # and the true next value y for t = L-1.
-            # x[:, 1:, :] has shape (B, L-1, 1) — the known future values
-            # y has shape (B, 1) — the unknown final target
-            y_seq = torch.cat([x[:, 1:, :], y.unsqueeze(1)], dim=1)  # (B, L, 1)
-            yhat = model(x)        # (B, L, 1)
-            loss = loss_fn(yhat, y_seq)
-        else:
-            yhat = model(x)        # (B, 1)
-            loss = loss_fn(yhat, y)
-
+        yhat = model(x)                  # (B, L, 1)
+        loss = loss_fn(yhat, y_seq)      # dense MSE over all L positions
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
@@ -127,6 +126,7 @@ def train_fixed(
     lr: float,
     device: torch.device,
 ) -> None:
+    """Train on sliding windows of a single fixed dataset."""
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     loss_fn = torch.nn.MSELoss()
 
@@ -142,9 +142,12 @@ def train_fixed(
         x = x.to(device)
         y = y.to(device)
 
+        # Dense supervision for fixed training too
+        y_seq = torch.cat([x[:, 1:, :], y.unsqueeze(1)], dim=1)  # (B, L, 1)
+
         opt.zero_grad(set_to_none=True)
-        yhat = model(x)
-        loss = loss_fn(yhat, y)
+        yhat = model(x)               # (B, L, 1)
+        loss = loss_fn(yhat, y_seq)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
@@ -172,8 +175,6 @@ def train_one_dataset(
     seed: int,
     device: str,
     training_mode: str = "iid",
-    ar_order: int = 2,
-    dense_supervision: bool = False,
     ar_coeff_scale: float = 0.6,
 ) -> Dict[str, Any]:
     device = resolve_device(device)
@@ -193,7 +194,6 @@ def train_one_dataset(
         n_heads=n_heads,
         n_layers=n_layers,
         dropout=dropout,
-        dense_supervision=dense_supervision,
     )
     model = CausalTransformerForecaster(cfg).to(device)
     model.train()
@@ -231,17 +231,17 @@ def train_one_dataset(
 
     train_loader_eval = DataLoader(ds_train, batch_size=batch_size, shuffle=False)
     _, train_rmse = eval_loop(model, train_loader_eval, device)
-    _, val_rmse = eval_loop(model, val_loader, device)
+    _, val_rmse   = eval_loop(model, val_loader, device)
 
     return {
         "train_rmse": float(train_rmse),
-        "val_rmse": float(val_rmse),
-        "std_used": float(stdzr.std),
-        "mean_used": float(stdzr.mean),
-        "n_train": int(len(ds_train)),
-        "n_val": int(len(ds_val)),
+        "val_rmse":   float(val_rmse),
+        "std_used":   float(stdzr.std),
+        "mean_used":  float(stdzr.mean),
+        "n_train":    int(len(ds_train)),
+        "n_val":      int(len(ds_val)),
         "training_mode": training_mode,
-        "model_config": cfg.__dict__,
+        "model_config":  cfg.__dict__,
     }
 
 
@@ -251,23 +251,21 @@ def train_one_dataset(
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data_dir", type=str, default="generated_data")
-    ap.add_argument("--dataset", type=str, required=True)
-    ap.add_argument("--context_len", type=int, default=64)
-    ap.add_argument("--val_frac", type=float, default=0.3)
-    ap.add_argument("--steps", type=int, default=2000)
-    ap.add_argument("--batch_size", type=int, default=128)
-    ap.add_argument("--lr", type=float, default=3e-4)
-    ap.add_argument("--d_model", type=int, default=256)
-    ap.add_argument("--n_heads", type=int, default=4)
-    ap.add_argument("--n_layers", type=int, default=6)
-    ap.add_argument("--dropout", type=float, default=0.1)
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--device", type=str, default="cuda")
-    ap.add_argument("--training_mode", type=str, default="iid", choices=["iid", "fixed"])
-    ap.add_argument("--ar_order", type=int, default=2)
-    ap.add_argument("--dense_supervision", action="store_true")
-    ap.add_argument("--ar_coeff_scale", type=float, default=0.6)
+    ap.add_argument("--data_dir",      type=str,   default="generated_data")
+    ap.add_argument("--dataset",       type=str,   required=True)
+    ap.add_argument("--context_len",   type=int,   default=64)
+    ap.add_argument("--val_frac",      type=float, default=0.3)
+    ap.add_argument("--steps",         type=int,   default=2000)
+    ap.add_argument("--batch_size",    type=int,   default=128)
+    ap.add_argument("--lr",            type=float, default=3e-4)
+    ap.add_argument("--d_model",       type=int,   default=256)
+    ap.add_argument("--n_heads",       type=int,   default=4)
+    ap.add_argument("--n_layers",      type=int,   default=6)
+    ap.add_argument("--dropout",       type=float, default=0.1)
+    ap.add_argument("--seed",          type=int,   default=0)
+    ap.add_argument("--device",        type=str,   default="cuda")
+    ap.add_argument("--training_mode", type=str,   default="iid", choices=["iid", "fixed"])
+    ap.add_argument("--ar_coeff_scale",type=float, default=0.6)
     args = ap.parse_args()
 
     npz_path = str(Path(args.data_dir) / f"{args.dataset}.npz")
@@ -285,8 +283,6 @@ def main():
         seed=args.seed,
         device=args.device,
         training_mode=args.training_mode,
-        ar_order=args.ar_order,
-        dense_supervision=args.dense_supervision,
         ar_coeff_scale=args.ar_coeff_scale,
     )
     print(f"\ntransformer {args.dataset} [{out['training_mode']}]")

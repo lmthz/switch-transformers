@@ -71,22 +71,14 @@ def eval_transformer_on_dataset(
 
 def main():
     import argparse
-    ap = argparse.ArgumentParser(description="Compare MSAR baseline vs transformer.")
+    ap = argparse.ArgumentParser(description="Compare MSAR baseline vs decoder transformer.")
     ap.add_argument(
         "--pool_path", type=str, default=None,
         help="Path to pre-generated series pool .npz from generate_pool.py.",
     )
     ap.add_argument(
-        "--dense_supervision", action="store_true",
-        help="Train with dense supervision: predict at every position, not just last.",
-    )
-    ap.add_argument(
         "--ar_coeff_scale", type=float, default=0.6,
-        help=(
-            "Scale for AR coefficient sampling in the training prior. "
-            "Default 0.6 — coefficients drawn from [-scale, scale]. "
-            "Set higher (e.g. 1.2) to cover evaluation datasets with large coefficients."
-        ),
+        help="AR coefficient scale used during training (informational only when using pool).",
     )
     ap.add_argument(
         "--steps", type=int, default=22000,
@@ -94,15 +86,12 @@ def main():
     )
     ap.add_argument(
         "--experiment_name", type=str, default=None,
-        help=(
-            "Label for this run. Results saved to results_<name>.csv. "
-            "If not set, results are only printed to stdout."
-        ),
+        help="Label for this run. Results saved to results_<name>.csv.",
     )
     args = ap.parse_args()
 
     data_dir = "generated_data"
-    val_frac = 0.3
+    val_frac  = 0.3
 
     # msar hyperparams
     candidate_orders = [2, 3, 4, 5, 6, 8, 10]
@@ -122,11 +111,11 @@ def main():
     device_str  = "cuda"
     training_mode = "iid"
 
-    # log experiment config clearly
     print(f"\n{'='*60}")
     print(f"Experiment: {args.experiment_name or 'unnamed'}")
-    print(f"  steps={steps}  dense_supervision={args.dense_supervision}  ar_coeff_scale={args.ar_coeff_scale}")
+    print(f"  steps={steps}  ar_coeff_scale={args.ar_coeff_scale}")
     print(f"  pool_path={args.pool_path}")
+    print(f"  architecture: decoder-only (dense next-step supervision)")
     print(f"{'='*60}\n")
 
     device = resolve_device(device_str)
@@ -137,14 +126,13 @@ def main():
     # Train transformer once (iid mode)
     # --------------------------------------------------------
     if training_mode == "iid":
-        print("=== Training transformer (iid, single run) ===")
+        print("=== Training transformer (iid, decoder-only) ===")
         cfg = TransformerConfig(
             context_len=context_len,
             d_model=d_model,
             n_heads=n_heads,
             n_layers=n_layers,
             dropout=dropout,
-            dense_supervision=args.dense_supervision,
         )
         model = CausalTransformerForecaster(cfg).to(device)
         model.train()
@@ -237,29 +225,27 @@ def main():
                 seed=seed,
                 device=device_str,
                 training_mode="fixed",
-                dense_supervision=args.dense_supervision,
                 ar_coeff_scale=args.ar_coeff_scale,
             )
 
         print(f"transformer: train_rmse={tr['train_rmse']:.4f} val_rmse={tr['val_rmse']:.4f}")
 
         rows.append({
-            "dataset":              ds,
-            "msar_order":           msar.get("selected_order", msar["order"]) if msar else float("nan"),
-            "msar_train_rmse":      msar["train_rmse"]       if msar else float("nan"),
-            "msar_val_rmse":        msar["val_rmse"]         if msar else float("nan"),
-            "msar_regime_acc_train":msar["regime_accuracy"]  if msar else float("nan"),
-            "noise_rmse":           msar["noise_rmse"]       if msar else float("nan"),
-            "oracle_model_rmse":    msar["oracle_model_rmse"]if msar else float("nan"),
-            "tr_train_rmse":        tr["train_rmse"],
-            "tr_val_rmse":          tr["val_rmse"],
+            "dataset":               ds,
+            "msar_order":            msar.get("selected_order", msar["order"]) if msar else float("nan"),
+            "msar_train_rmse":       msar["train_rmse"]        if msar else float("nan"),
+            "msar_val_rmse":         msar["val_rmse"]          if msar else float("nan"),
+            "msar_regime_acc_train": msar["regime_accuracy"]   if msar else float("nan"),
+            "noise_rmse":            msar["noise_rmse"]        if msar else float("nan"),
+            "oracle_model_rmse":     msar["oracle_model_rmse"] if msar else float("nan"),
+            "tr_train_rmse":         tr["train_rmse"],
+            "tr_val_rmse":           tr["val_rmse"],
         })
 
     df = pd.DataFrame(rows)
     print("\nsummary table")
     print(df.to_string(index=False))
 
-    # Save results to CSV if experiment name provided
     if args.experiment_name:
         out_path = f"results_{args.experiment_name}.csv"
         df.to_csv(out_path, index=False)

@@ -1,5 +1,8 @@
 # generate_pool.py
 """
+Pre-generate a pool of synthetic MSAR series and save to disk.
+Can be run on login node (no GPU needed) or inside sbatch before training.
+
 Usage:
     python generate_pool.py                               # defaults
     python generate_pool.py --n_series 200000             # smaller pool
