@@ -46,7 +46,7 @@ echo ""
 echo "=== EXPERIMENT: decoder-only, ar_coeff_scale=0.6, no-repeat pool ==="
 python run_compare.py \
     --pool_path "$POOL" \
-    --steps 22000 \
+    --steps 100000 \
     --ar_coeff_scale 0.6 \
     --experiment_name decoder_norepeat
 
