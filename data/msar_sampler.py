@@ -391,11 +391,10 @@ class MSARBatchSampler:
     def load_pool(self, pool_path: str) -> None:
         """
         Load a pre-generated series pool from disk into memory.
-        After calling this, sample_batch draws from the pool instead
-        of generating series on the fly.
-
-        The pool file must have been created by generate_pool.py.
-        Prints a summary of what was loaded.
+        After calling this, sample_batch draws sequentially without
+        replacement — each series seen at most once per epoch before
+        the pool reshuffles and restarts. Prevents overfitting from
+        repeatedly seeing the same series parameters.
 
         Args:
             pool_path: path to the .npz file produced by generate_pool.py
@@ -405,8 +404,13 @@ class MSARBatchSampler:
         self._pool = data["series"]          # (N, usable_len) float32
         n, usable_len = self._pool.shape
 
-        # Warn if pool series are shorter than context_len requires
-        # (not an error yet — will raise clearly in sample_batch if needed)
+        # Shuffled index order for sequential no-repeat sampling.
+        # _pool_cursor advances by batch_size each call.
+        # When exhausted, reshuffle and reset — new epoch, new random windows.
+        self._pool_order  = self.rng.permutation(n)
+        self._pool_cursor = 0
+        self._pool_epochs = 0
+
         print(
             f"Pool loaded: {n:,} series  x  {usable_len} timesteps  "
             f"dtype={self._pool.dtype}  "
@@ -414,6 +418,9 @@ class MSARBatchSampler:
         )
         if "seed" in data:
             print(f"Pool seed: {int(data['seed'])}")
+        print(
+            f"Sequential no-repeat: ~{n // 128:,} steps per epoch at batch_size=128"
+        )
 
     def _simulate_batch(self, family: int, B: int) -> np.ndarray:
         fns = [
@@ -432,12 +439,21 @@ class MSARBatchSampler:
 
     def _sample_series_from_pool(self, batch_size: int) -> np.ndarray:
         """
-        Draw batch_size random series from the pre-loaded pool.
+        Draw the next batch_size series from the pool sequentially.
+        Each series is seen at most once before the pool reshuffles.
         Returns (batch_size, usable_len) float32 array.
         """
         n_pool = self._pool.shape[0]
-        idx = self.rng.integers(0, n_pool, size=batch_size)
-        return self._pool[idx]   # numpy fancy index — fast, no copy if contiguous
+
+        # If not enough series left in current epoch, reshuffle and restart
+        if self._pool_cursor + batch_size > n_pool:
+            self._pool_order  = self.rng.permutation(n_pool)
+            self._pool_cursor = 0
+            self._pool_epochs += 1
+
+        idx = self._pool_order[self._pool_cursor : self._pool_cursor + batch_size]
+        self._pool_cursor += batch_size
+        return self._pool[idx]
 
     def sample_batch(
         self,

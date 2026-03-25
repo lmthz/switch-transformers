@@ -33,37 +33,22 @@ echo ""
 
 POOL=series_pool.npz
 if [ -f "$POOL" ]; then
-    echo "=== Standard pool already exists at $POOL, skipping ==="
+    echo "=== Pool already exists at $POOL, skipping generation ==="
 else
-    echo "=== Generating standard pool (ar_coeff_scale=0.6) ==="
-    python generate_pool.py --n_series 500000 --ar_coeff_scale 0.6 --out "$POOL"
+    echo "=== Generating series pool on compute node CPUs (~15 min) ==="
+    python generate_pool.py \
+        --n_series 500000 \
+        --ar_coeff_scale 0.6 \
+        --out "$POOL"
 fi
 echo ""
 
-POOL_WIDE=series_pool_wide.npz
-if [ -f "$POOL_WIDE" ]; then
-    echo "=== Wide pool already exists at $POOL_WIDE, skipping ==="
-else
-    echo "=== Generating wide pool (ar_coeff_scale=1.2) on compute node CPUs ==="
-    python generate_pool.py --n_series 500000 --ar_coeff_scale 1.2 --out "$POOL_WIDE"
-fi
-echo ""
-
-echo "=== EXPERIMENT 1: baseline (decoder-only, ar_coeff_scale=0.6) ==="
+echo "=== EXPERIMENT: decoder-only, ar_coeff_scale=0.6, no-repeat pool ==="
 python run_compare.py \
     --pool_path "$POOL" \
     --steps 22000 \
     --ar_coeff_scale 0.6 \
-    --experiment_name baseline || echo "[WARNING] baseline failed, continuing"
-echo ""
+    --experiment_name decoder_norepeat
 
-echo "=== EXPERIMENT 2: wider_coeffs (decoder-only, ar_coeff_scale=1.2) ==="
-python run_compare.py \
-    --pool_path "$POOL_WIDE" \
-    --steps 22000 \
-    --ar_coeff_scale 1.2 \
-    --experiment_name wider_coeffs || echo "[WARNING] wider_coeffs failed, continuing"
 echo ""
-
-echo "=== All experiments complete ==="
-echo "Results: results_baseline.csv  results_wider_coeffs.csv"
+echo "=== Complete. Results: results_decoder_norepeat.csv ==="
