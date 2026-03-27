@@ -23,32 +23,38 @@ echo "=== Environment ==="
 python -c "import torch; print('cuda:', torch.cuda.is_available(), '| devices:', torch.cuda.device_count())"
 echo ""
 
-if [ -d "generated_data" ] && [ "$(ls generated_data/*.npz 2>/dev/null | wc -l)" -ge 21 ]; then
-    echo "=== Evaluation datasets already exist, skipping ==="
+N_EXPECTED=63
+N_FOUND=$(ls generated_data/*_r*.npz 2>/dev/null | wc -l)
+if [ "$N_FOUND" -ge "$N_EXPECTED" ]; then
+    echo "=== Evaluation datasets already exist ($N_FOUND files), skipping ==="
 else
-    echo "=== Generating evaluation datasets ==="
-    python data_generation.py
+    echo "=== Generating evaluation datasets (3 instances per type) ==="
+    python data_generation.py --n_instances 3
 fi
+echo ""
+
+echo "=== Plotting training data samples ==="
+python plot_training_samples.py --n_per_family 2 --out training_samples.png
 echo ""
 
 POOL=series_pool.npz
 if [ -f "$POOL" ]; then
-    echo "=== Pool already exists at $POOL, skipping generation ==="
+    echo "=== Pool already exists at $POOL, skipping ==="
 else
-    echo "=== Generating series pool on compute node CPUs (~15 min) ==="
-    python generate_pool.py \
-        --n_series 500000 \
-        --ar_coeff_scale 0.6 \
-        --out "$POOL"
+    echo "=== Generating series pool on compute node CPUs ==="
+    python generate_pool.py --n_series 500000 --ar_coeff_scale 0.6 --out "$POOL"
 fi
 echo ""
 
-echo "=== EXPERIMENT: decoder-only, ar_coeff_scale=0.6, no-repeat pool ==="
+echo "=== EXPERIMENT: decoder-only, 3 instances per dataset ==="
 python run_compare.py \
     --pool_path "$POOL" \
     --steps 100000 \
     --ar_coeff_scale 0.6 \
-    --experiment_name decoder_norepeat
+    --n_instances 3 \
+    --experiment_name decoder_3instances
 
 echo ""
-echo "=== Complete. Results: results_decoder_norepeat.csv ==="
+echo "=== Complete ==="
+echo "Results:       results_decoder_3instances.csv"
+echo "Training plot: training_samples.png"

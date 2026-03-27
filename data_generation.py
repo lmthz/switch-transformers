@@ -336,7 +336,7 @@ class MSSwitchGenerator:
         return {"y": y, "states": states, "T": T, "orders": (p, d, q, P, D, Q, s)}
 
     # ---------------- dataset menu (extended) ----------------
-    def make_datasets_menu(self, n: int = 1000, burn: int = 600):
+    def make_datasets_menu(self, n: int = 1000, burn: int = 600, suffix: str = "_r0"):
         """
         Generate an extended suite of Markov-switching datasets. All artifacts are saved
         under self.save_dir with consistent names and plots.
@@ -381,51 +381,51 @@ class MSSwitchGenerator:
         regA1 = RegimeARMA(ar=np.array([0.6, -0.2]), ma=None, sigma=0.30, name="calm")
         regA2 = RegimeARMA(ar=np.array([1.2, -0.6]), ma=None, sigma=0.30, name="volatile")
         self.simulate_ar([regA1, regA2], T_base, n=n, burn_in=burn,
-                         save_name="A1_ar2_coeffs_easy", plot=True)
+                         save_name=f"A1_ar2_coeffs_easy{suffix}", plot=True)
 
         # ---------------- A2: AR(2) CoeffsOnly (harder, closer) ----------------
         regA3 = RegimeARMA(ar=np.array([0.75, -0.25]), ma=None, sigma=0.30, name="r1")
         regA4 = RegimeARMA(ar=np.array([0.85, -0.30]), ma=None, sigma=0.30, name="r2")
         self.simulate_ar([regA3, regA4], T_base, n=n, burn_in=burn,
-                         save_name="A2_ar2_coeffs_hard", plot=True)
+                         save_name=f"A2_ar2_coeffs_hard{suffix}", plot=True)
 
         # ---------------- A3: AR(2) Coeffs+Var (coefficients AND sigma change) ----------------
         regA5 = RegimeARMA(ar=np.array([0.65, -0.15]), ma=None, sigma=0.20, name="coeffs_var_low")
         regA6 = RegimeARMA(ar=np.array([1.05, -0.55]), ma=None, sigma=0.60, name="coeffs_var_high")
         self.simulate_ar([regA5, regA6], T_base, n=n, burn_in=burn,
-                         save_name="A3_ar2_coeffs_plus_var", plot=True)
+                         save_name=f"A3_ar2_coeffs_plus_var{suffix}", plot=True)
 
         # ---------------- B1: AR(2) VarianceOnly ----------------
         regB1 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.20, name="lowvar")
         regB2 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.60, name="highvar")
         self.simulate_ar([regB1, regB2], T_base, n=n, burn_in=burn,
-                         save_name="B1_ar2_variance", plot=True)
+                         save_name=f"B1_ar2_variance{suffix}", plot=True)
 
         # ---------------- B2: AR(2) VarianceOnly (bigger contrast) ----------------
         regB3 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.10, name="verylow")
         regB4 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.80, name="veryhigh")
         self.simulate_ar([regB3, regB4], T_base, n=n, burn_in=burn,
-                         save_name="B2_ar2_variance_big", plot=True)
+                         save_name=f"B2_ar2_variance_big{suffix}", plot=True)
 
         # ---------------- C1: ARMA(2,1) Coeffs+Var ----------------
         regC1 = RegimeARMA(ar=np.array([0.6, -0.2]), ma=np.array([0.3]), sigma=0.25, name="c1")
         regC2 = RegimeARMA(ar=np.array([1.2, -0.6]), ma=np.array([0.2]), sigma=0.55, name="c2")
         self.simulate_arma([regC1, regC2], T_base, n=n, burn_in=burn,
-                           save_name="C1_arma21_coeffs_var", plot=True)
+                           save_name=f"C1_arma21_coeffs_var{suffix}", plot=True)
 
         # ---------------- D1: ARIMA(2,1,1) ----------------
         self.simulate_arima([regC1, regC2], T_base, n=n, d=1, burn_in=burn,
-                            save_name="D1_arima211", plot=True)
+                            save_name=f"D1_arima211{suffix}", plot=True)
 
         # ---------------- D2: ARIMA(2,2,1) (more integration) ----------------
         self.simulate_arima([regC1, regC2], T_base, n=n, d=2, burn_in=burn,
-                            save_name="D2_arima221", plot=True)
+                            save_name=f"D2_arima221{suffix}", plot=True)
 
         # ---------------- D3: ARIMA(2,1,0) (integrated AR, no MA) ----------------
         regD3_1 = RegimeARMA(ar=np.array([0.6, -0.2]), ma=None, sigma=0.30, name="ar_int_r1")
         regD3_2 = RegimeARMA(ar=np.array([1.0, -0.5]), ma=None, sigma=0.30, name="ar_int_r2")
         self.simulate_arima([regD3_1, regD3_2], T_base, n=n, d=1, burn_in=burn,
-                            save_name="D3_arima210", plot=True)
+                            save_name=f"D3_arima210{suffix}", plot=True)
 
         # ---------------- E1: DriftOnly via X=1 (β switch, piecewise linear) ----------------
         regE1 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.30,
@@ -436,7 +436,7 @@ class MSSwitchGenerator:
         self.simulate_sarimax([regE1, regE2], T_base, n=n,
                               p=2, d=0, q=0, P=0, D=0, Q=0, s=1,
                               X=X_const, burn_in=burn,
-                              save_name="E1_drift_only", plot=True)
+                              save_name=f"E1_drift_only{suffix}", plot=True)
 
         # ---------------- E2: LevelShiftOnly via X=1 (β changes sign) ----------------
         regE3 = RegimeARMA(ar=np.array([0.7, -0.25]), ma=None, sigma=0.30,
@@ -446,7 +446,7 @@ class MSSwitchGenerator:
         self.simulate_sarimax([regE3, regE4], T_base, n=n,
                               p=2, d=0, q=0, P=0, D=0, Q=0, s=1,
                               X=X_const, burn_in=burn,
-                              save_name="E2_level_shift", plot=True)
+                              save_name=f"E2_level_shift{suffix}", plot=True)
 
         # ---------------- F1: Seasonal SARIMAX (2,0,1)x(1,1,1)_{24} ----------------
         s = 24
@@ -457,7 +457,7 @@ class MSSwitchGenerator:
         self.simulate_sarimax([regF1, regF2], T_base, n=n,
                               p=2, d=0, q=1, P=1, D=1, Q=1, s=s,
                               X=None, burn_in=burn,
-                              save_name="F1_seasonal_sarimax", plot=True)
+                              save_name=f"F1_seasonal_sarimax{suffix}", plot=True)
 
         # ---------------- F2: Seasonal+Exog (sin, cos) with regime β ----------------
         t_full = np.arange(n + burn)
@@ -475,7 +475,7 @@ class MSSwitchGenerator:
         self.simulate_sarimax([regF3, regF4], T_base, n=n,
                               p=2, d=0, q=1, P=1, D=1, Q=1, s=s,
                               X=X_trig, burn_in=burn,
-                              save_name="F2_seasonal_exog", plot=True)
+                              save_name=f"F2_seasonal_exog{suffix}", plot=True)
 
         # ---------------- G1: ExogenousOnly (AR same; β on sin only) ----------------
         X_sin = np.sin(2 * np.pi * t_full / s)  # (n+burn,)
@@ -486,7 +486,7 @@ class MSSwitchGenerator:
         self.simulate_sarimax([regG1, regG2], T_base, n=n,
                               p=2, d=0, q=0, P=0, D=0, Q=0, s=1,
                               X=X_sin, burn_in=burn,
-                              save_name="G1_exogenous_only", plot=True)
+                              save_name=f"G1_exogenous_only{suffix}", plot=True)
 
         # ---------------- H1: HighOrder AR(p=10) CoeffsOnly ----------------
         ar10_r1 = np.array([0.45, -0.3, 0.2, -0.12, 0.08, -0.06, 0.05, -0.04, 0.03, -0.02])
@@ -494,29 +494,29 @@ class MSSwitchGenerator:
         regH1 = RegimeARMA(ar=ar10_r1, ma=None, sigma=0.30, name="p10_r1")
         regH2 = RegimeARMA(ar=ar10_r2, ma=None, sigma=0.30, name="p10_r2")
         self.simulate_ar([regH1, regH2], T_base, n=n, burn_in=burn,
-                         save_name="H1_ar10_coeffs", plot=True)
+                         save_name=f"H1_ar10_coeffs{suffix}", plot=True)
 
         # ---------------- H2: Near-Unit-Root stress (AR(1)) ----------------
         regH3 = RegimeARMA(ar=np.array([0.98]), ma=None, sigma=0.20, name="unitish")
         regH4 = RegimeARMA(ar=np.array([0.90]), ma=None, sigma=0.20, name="less-persistent")
         self.simulate_ar([regH3, regH4], T_base, n=n, burn_in=burn,
-                         save_name="H2_ar1_near_unit_root", plot=True)
+                         save_name=f"H2_ar1_near_unit_root{suffix}", plot=True)
 
         # ---------------- S1: SparseSwitching on AR(2) CoeffsOnly ----------------
         self.simulate_ar([regA1, regA2], T_sparse, n=n, burn_in=burn,
-                         save_name="S1_sparse_switching", plot=True)
+                         save_name=f"S1_sparse_switching{suffix}", plot=True)
 
         # ---------------- S2: FrequentSwitching on AR(2) CoeffsOnly ----------------
         self.simulate_ar([regA1, regA2], T_frequent, n=n, burn_in=burn,
-                         save_name="S2_frequent_switching", plot=True)
+                         save_name=f"S2_frequent_switching{suffix}", plot=True)
 
         # ---------------- NS0/NS1: No-switch cases (always regime 0 or 1) ----------------
         # Always in regime 0 (using A1 params)
         self.simulate_ar([regA1, regA2], T_no_switch, n=n, burn_in=burn,
-                         save_name="NS0_A1_no_switch_regime0", plot=True, init_state=0)
+                         save_name=f"NS0_A1_no_switch_regime0{suffix}", plot=True, init_state=0)
         # Always in regime 1 (using A1 params)
         self.simulate_ar([regA1, regA2], T_no_switch, n=n, burn_in=burn,
-                         save_name="NS1_A1_no_switch_regime1", plot=True, init_state=1)
+                         save_name=f"NS1_A1_no_switch_regime1{suffix}", plot=True, init_state=1)
 
         # ---------------- SW1: Single-switch trajectory (half 0, half 1) ----------------
         total = n + burn
@@ -528,18 +528,36 @@ class MSSwitchGenerator:
             T_base,
             n=n,
             burn_in=burn,
-            save_name="SW1_A1_single_switch",
+            save_name=f"SW1_A1_single_switch{suffix}",
             plot=True,
             states_override=states_single,
         )
 
-        print("\n[menu] All datasets generated and saved to", self.save_dir.resolve(), "\n")
+        print(f"\n[menu] All datasets (suffix={suffix}) saved to {self.save_dir.resolve()}\n")
 
 
 # ---------------- driver (runs all and saves plots) ----------------
 def main():
-    gen = MSSwitchGenerator(save_dir="generated_data", seed=42)
-    gen.make_datasets_menu(n=1000, burn=600)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--n_instances", type=int, default=3,
+                    help="Number of instances per dataset type (default 3). "
+                         "Each instance uses a different RNG seed, giving different "
+                         "regime sequences but the same model parameters.")
+    ap.add_argument("--n", type=int, default=1000, help="Series length (default 1000)")
+    ap.add_argument("--burn", type=int, default=600, help="Burn-in (default 600)")
+    args = ap.parse_args()
+
+    # Seeds for each instance — well-separated so regime sequences differ clearly
+    seeds = [42 + i * 100 for i in range(args.n_instances)]
+    print(f"Generating {args.n_instances} instance(s) per dataset type")
+    print(f"Seeds: {seeds}")
+    print("Files named: <dataset>_r0.npz, <dataset>_r1.npz, ... (r0 = original)\n")
+
+    for i, seed in enumerate(seeds):
+        print(f"\n=== Instance r{i} (seed={seed}) ===")
+        gen = MSSwitchGenerator(save_dir=f"generated_data", seed=seed)
+        gen.make_datasets_menu(n=args.n, burn=args.burn, suffix=f"_r{i}")
 
 if __name__ == "__main__":
     main()
