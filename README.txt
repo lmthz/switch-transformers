@@ -14,6 +14,8 @@ sbatch scripts/run_compare.sbatch
 
 # Watch output (replace with your actual job id)
 tail -f logs/switchtr_<jobid>.out
+cat logs/switchtr_<jobid>.out
+
 
 # Detach and leave running
 Ctrl+b d
@@ -21,6 +23,11 @@ Ctrl+b d
 # Come back later
 ssh <kerb>@orcd-login.mit.edu
 tmux attach -t run
+
+#download results (run from local terminal)
+scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_*.csv' ~/Downloads/
+scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/training_samples.png' ~/Downloads/
+
 
 # Other useful commands
 squeue -u <kerb>                   # check job status
@@ -53,6 +60,10 @@ python data_generation.py
 # Submit — sbatch script handles data generation and pool generation automatically
 mkdir -p logs
 python generate_pool.py --n_series 500000 --out series_pool.npz
+sbatch scripts/run_compare.sbatch
+
+# RE-RUN TRANSFORMER ONLY (MSAR already cached)
+# Just resubmit — sbatch skips data generation, pool, and MSAR automatically
 sbatch scripts/run_compare.sbatch
 
 # Watch output

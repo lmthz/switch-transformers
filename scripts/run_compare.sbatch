@@ -1,5 +1,5 @@
 #!/bin/bash -l
-#SBATCH -J switchtr
+#SBATCH -J sw_transformer
 #SBATCH -p mit_normal_gpu
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
@@ -9,7 +9,6 @@
 #SBATCH -e logs/%x_%j.err
 
 set -euo pipefail
-
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p logs
 
@@ -23,32 +22,39 @@ echo "=== Environment ==="
 python -c "import torch; print('cuda:', torch.cuda.is_available(), '| devices:', torch.cuda.device_count())"
 echo ""
 
-N_EXPECTED=63
-N_FOUND=$(ls generated_data/*_r*.npz 2>/dev/null | wc -l)
-if [ "$N_FOUND" -ge "$N_EXPECTED" ]; then
-    echo "=== Evaluation datasets already exist ($N_FOUND files), skipping ==="
-else
-    echo "=== Generating evaluation datasets (3 instances per type) ==="
-    python data_generation.py --n_instances 3
+# Check prerequisites
+if [ ! -f "msar_results.csv" ]; then
+    echo "[error] msar_results.csv not found. Run: sbatch scripts/run_msar.sbatch"
+    exit 1
 fi
+N_FOUND=$(ls generated_data/*_r*.npz 2>/dev/null | wc -l)
+if [ "$N_FOUND" -lt 63 ]; then
+    echo "[error] Only $N_FOUND dataset files found (need 63). Run: sbatch scripts/generate_data.sbatch"
+    exit 1
+fi
+echo "=== Prerequisites OK ($N_FOUND dataset files, msar_results.csv found) ==="
 echo ""
 
+# Plot training samples
 echo "=== Plotting training data samples ==="
 python plot_training_samples.py --n_per_family 2 --out training_samples.png
 echo ""
 
+# Generate pool on this compute node (CPU only, GPU idle ~15 min)
 POOL=series_pool.npz
 if [ -f "$POOL" ]; then
-    echo "=== Pool already exists at $POOL, skipping ==="
+    echo "=== Pool already exists, skipping ==="
 else
-    echo "=== Generating series pool on compute node CPUs ==="
+    echo "=== Generating series pool on compute node CPUs (~15 min) ==="
     python generate_pool.py --n_series 500000 --ar_coeff_scale 0.6 --out "$POOL"
 fi
 echo ""
 
-echo "=== EXPERIMENT: decoder-only, 3 instances per dataset ==="
+# Train and evaluate
+echo "=== Training transformer and evaluating ==="
 python run_compare.py \
     --pool_path "$POOL" \
+    --msar_csv msar_results.csv \
     --steps 100000 \
     --ar_coeff_scale 0.6 \
     --n_instances 3 \
@@ -56,5 +62,5 @@ python run_compare.py \
 
 echo ""
 echo "=== Complete ==="
-echo "Results:       results_decoder_3instances.csv"
-echo "Training plot: training_samples.png"
+echo "Results: results_decoder_3instances.csv"
+echo "Plot:    training_samples.png"

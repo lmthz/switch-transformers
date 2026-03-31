@@ -1,0 +1,23 @@
+#!/bin/bash -l
+#SBATCH -J sw_data
+#SBATCH -p mit_normal_gpu
+#SBATCH --gres=gpu:0
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH -t 01:00:00
+#SBATCH -o logs/%x_%j.out
+#SBATCH -e logs/%x_%j.err
+
+set -euo pipefail
+cd "${SLURM_SUBMIT_DIR}"
+mkdir -p logs
+
+source /home/${USER}/.conda/etc/profile.d/conda.sh 2>/dev/null || \
+    source /orcd/home/002/lizthorn/.conda/etc/profile.d/conda.sh 2>/dev/null || \
+    { module load miniforge && source "$(conda info --base)/etc/profile.d/conda.sh"; }
+
+conda activate switchgpu
+
+echo "=== Generating evaluation datasets (3 instances per type) ==="
+python data_generation.py --n_instances 3
+echo "=== Done. Run next: sbatch scripts/run_msar.sbatch ==="
