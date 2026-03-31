@@ -54,16 +54,10 @@ conda create -y -n switchgpu python=3.10
 conda activate switchgpu
 pip install -r requirements.txt
 
-#generate data
-python data_generation.py 
-
-# Submit — sbatch script handles data generation and pool generation automatically
-mkdir -p logs
-python generate_pool.py --n_series 500000 --out series_pool.npz
-sbatch scripts/run_compare.sbatch
-
-# RE-RUN TRANSFORMER ONLY (MSAR already cached)
-# Just resubmit — sbatch skips data generation, pool, and MSAR automatically
+sbatch scripts/generate_data.sbatch
+# wait for it to finish: squeue -u <kerb>
+sbatch scripts/run_msar.sbatch
+# wait for it to finish: squeue -u <kerb>
 sbatch scripts/run_compare.sbatch
 
 # Watch output
