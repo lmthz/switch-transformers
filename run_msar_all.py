@@ -83,12 +83,13 @@ def main():
         msar = None
         try:
             msar = run_msar(
-                ds_r0,
+                ds,                   # base name for CONFIGS lookup
                 data_dir=data_dir,
                 val_frac=args.val_frac,
                 candidate_orders=candidate_orders,
                 maxiter=maxiter,
                 em_iter=em_iter,
+                file_name=ds_r0,      # actual file to load (_r0 suffix)
             )
             print(
                 f"         train={msar['train_rmse']:.4f}  val={msar['val_rmse']:.4f}  "

@@ -465,9 +465,21 @@ def run_msar(
     candidate_orders: Optional[List[int]] = None,
     maxiter: int = 150,
     em_iter: int = 10,
+    file_name: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """
+    Args:
+        dataset_name: base name used for CONFIGS lookup (e.g. "A1_ar2_coeffs_easy")
+        file_name:    name of the .npz file to load, without extension
+                      (e.g. "A1_ar2_coeffs_easy_r0"). Defaults to dataset_name
+                      if not provided. Use this when evaluation files have a
+                      suffix like _r0 but CONFIGS keys do not.
+    """
     if dataset_name not in CONFIGS:
         raise KeyError(f"unknown dataset {dataset_name}")
+
+    # Use file_name for data loading, dataset_name for CONFIGS lookup
+    load_name = file_name if file_name is not None else dataset_name
 
     base_cfg = CONFIGS[dataset_name]
 
@@ -483,7 +495,7 @@ def run_msar(
         cfg = replace(base_cfg, order=int(o))
         try:
             out = evaluate_msar_fixed_order(
-                dataset_name=dataset_name,
+                dataset_name=load_name,
                 data_dir=data_dir,
                 cfg=cfg,
                 val_frac=val_frac,
