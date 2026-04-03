@@ -4,9 +4,15 @@ Train transformer and evaluate on all datasets.
 Loads pre-computed MSAR results from msar_results.csv (produced by run_msar_all.py).
 Does not run MSAR itself — run run_msar_all.py separately first.
 
+W&B logging:
+  - Training loss and val RMSE curves over steps
+  - Gradient norm over steps
+  - Per-dataset final results (transformer vs MSAR bar charts)
+  - All hyperparameters as run config
+
 Usage:
     python run_compare.py --pool_path series_pool.npz --steps 100000
-    python run_compare.py --msar_csv msar_results.csv --experiment_name my_run
+    python run_compare.py --no_wandb   # disable W&B logging
 """
 from __future__ import annotations
 
@@ -58,7 +64,6 @@ def eval_transformer_on_dataset(
     batch_size: int,
     device: torch.device,
 ) -> Dict[str, Any]:
-    """Evaluate a pre-trained model on one dataset via forward passes only."""
     ds_train, ds_val, stdzr, _ = make_train_val_datasets(
         npz_path=npz_path,
         context_len=context_len,
@@ -79,12 +84,15 @@ def main():
     ap.add_argument("--ar_coeff_scale",  type=float, default=0.6)
     ap.add_argument("--steps",           type=int,   default=100000)
     ap.add_argument("--experiment_name", type=str,   default=None)
-    ap.add_argument("--n_instances",     type=int,   default=3,
-                    help="Number of dataset instances per type (default 3).")
+    ap.add_argument("--n_instances",     type=int,   default=3)
+    ap.add_argument("--msar_csv",        type=str,   default="msar_results.csv")
     ap.add_argument(
-        "--msar_csv", type=str, default="msar_results.csv",
-        help="Path to pre-computed MSAR results CSV from run_msar_all.py "
-             "(default: msar_results.csv)."
+        "--no_wandb", action="store_true",
+        help="Disable Weights & Biases logging."
+    )
+    ap.add_argument(
+        "--wandb_project", type=str, default="switch-transformers",
+        help="W&B project name (default: switch-transformers)."
     )
     args = ap.parse_args()
 
@@ -100,7 +108,7 @@ def main():
     seed        = 0
     device_str  = "cuda"
 
-    # ── Load pre-computed MSAR results ────────────────────────────
+    # ── Load MSAR results ─────────────────────────────────────────
     msar_csv = Path(args.msar_csv)
     if not msar_csv.exists():
         print(f"[error] MSAR results not found at {msar_csv}")
@@ -109,12 +117,11 @@ def main():
     msar_df = pd.read_csv(msar_csv).set_index("dataset")
     print(f"Loaded MSAR results from {msar_csv} ({len(msar_df)} datasets)\n")
 
-    # ── Verify evaluation dataset files exist ─────────────────────
+    # ── Verify evaluation files ───────────────────────────────────
     suffixes = [f"_r{i}" for i in range(args.n_instances)]
     missing  = [
         f"{ds}{suf}"
-        for ds in DATASETS
-        for suf in suffixes
+        for ds in DATASETS for suf in suffixes
         if not (Path(data_dir) / f"{ds}{suf}.npz").exists()
     ]
     if missing:
@@ -123,20 +130,51 @@ def main():
             print(f"  generated_data/{m}.npz")
         return
 
+    # ── Initialise W&B ────────────────────────────────────────────
+    wandb_run = None
+    if not args.no_wandb:
+        try:
+            import wandb
+            wandb_run = wandb.init(
+                project=args.wandb_project,
+                name=args.experiment_name,
+                config={
+                    # Model architecture
+                    "context_len":    context_len,
+                    "d_model":        d_model,
+                    "n_heads":        n_heads,
+                    "n_layers":       n_layers,
+                    "dropout":        dropout,
+                    # Training
+                    "steps":          args.steps,
+                    "batch_size":     batch_size,
+                    "lr":             lr,
+                    "ar_coeff_scale": args.ar_coeff_scale,
+                    "seed":           seed,
+                    "pool_path":      args.pool_path,
+                    "n_instances":    args.n_instances,
+                    # Architecture description
+                    "architecture":   "decoder-only, dense next-step supervision",
+                    "training_mode":  "iid",
+                },
+            )
+            print(f"W&B run initialised: {wandb_run.url}\n")
+        except Exception as e:
+            print(f"[warning] W&B init failed ({e}). Continuing without logging.")
+            wandb_run = None
+
     print(f"\n{'='*60}")
     print(f"Experiment: {args.experiment_name or 'unnamed'}")
     print(f"  steps={args.steps}  ar_coeff_scale={args.ar_coeff_scale}")
-    print(f"  pool_path={args.pool_path}")
-    print(f"  n_instances={args.n_instances}")
-    print(f"  msar_csv={args.msar_csv}")
-    print(f"  architecture: decoder-only (dense next-step supervision)")
+    print(f"  pool_path={args.pool_path}  n_instances={args.n_instances}")
+    print(f"  wandb={'enabled' if wandb_run else 'disabled'}")
     print(f"{'='*60}\n")
 
     device = resolve_device(device_str)
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    # ── Train transformer ─────────────────────────────────────────
+    # ── Build model ───────────────────────────────────────────────
     print("=== Training transformer (iid, decoder-only) ===")
     cfg = TransformerConfig(
         context_len=context_len,
@@ -148,6 +186,13 @@ def main():
     model = CausalTransformerForecaster(cfg).to(device)
     model.train()
 
+    # Log model parameter count to W&B
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"Model parameters: {n_params:,}")
+    if wandb_run:
+        wandb_run.config.update({"n_params": n_params})
+
+    # ── Build sampler ─────────────────────────────────────────────
     sampler_cfg = MSARSamplerConfig(
         series_len=max(512, context_len * 4),
         k_regimes=2,
@@ -178,46 +223,43 @@ def main():
     _, ds_val_monitor, _, _ = make_train_val_datasets(first_npz, context_len, val_frac)
     val_loader_monitor = DataLoader(ds_val_monitor, batch_size=batch_size, shuffle=False)
 
-    train_iid(model, sampler, val_loader_monitor, args.steps, batch_size, lr, device)
+    # ── Train ─────────────────────────────────────────────────────
+    train_iid(
+        model, sampler, val_loader_monitor,
+        args.steps, batch_size, lr, device,
+        wandb_run=wandb_run,
+    )
     model.eval()
     print("=== Transformer training complete ===\n")
 
-    # ── Evaluate transformer on all instances ─────────────────────
+    # ── Evaluate on all datasets ──────────────────────────────────
     rows: List[Dict[str, Any]] = []
 
     for ds in DATASETS:
         print(f"\n=== {ds} ===")
 
-        # Pull MSAR row
-        if ds in msar_df.index:
-            m = msar_df.loc[ds]
+        m = msar_df.loc[ds] if ds in msar_df.index else None
+        if m is not None:
             print(
                 f"msar (r0): val={m['msar_val_rmse']:.4f}  "
                 f"regime_acc={m['msar_regime_acc']:.3f}  "
                 f"noise={m['noise_rmse']:.4f}  "
                 f"order={m['msar_order']}"
             )
-        else:
-            m = None
-            print(f"[msar] no results found for {ds} in {args.msar_csv}")
 
-        # Transformer on all n_instances
         tr_vals, tr_trains = [], []
         for i in range(args.n_instances):
             npz_path = str(Path(data_dir) / f"{ds}_r{i}.npz")
             tr_i = eval_transformer_on_dataset(
-                model=model,
-                npz_path=npz_path,
-                context_len=context_len,
-                val_frac=val_frac,
-                batch_size=batch_size,
-                device=device,
+                model=model, npz_path=npz_path,
+                context_len=context_len, val_frac=val_frac,
+                batch_size=batch_size, device=device,
             )
             tr_vals.append(tr_i["val_rmse"])
             tr_trains.append(tr_i["train_rmse"])
 
-        tr_val_mean  = float(np.mean(tr_vals))
-        tr_val_std   = float(np.std(tr_vals))
+        tr_val_mean   = float(np.mean(tr_vals))
+        tr_val_std    = float(np.std(tr_vals))
         tr_train_mean = float(np.mean(tr_trains))
 
         print(
@@ -225,6 +267,22 @@ def main():
             f"val_rmse={tr_val_mean:.4f} ± {tr_val_std:.4f}  "
             f"[{', '.join(f'{v:.4f}' for v in tr_vals)}]"
         )
+
+        # Log per-dataset results to W&B
+        if wandb_run is not None:
+            log = {
+                f"eval/{ds}/tr_val_rmse_mean": tr_val_mean,
+                f"eval/{ds}/tr_val_rmse_std":  tr_val_std,
+            }
+            if m is not None:
+                log[f"eval/{ds}/msar_val_rmse"]    = float(m["msar_val_rmse"])
+                log[f"eval/{ds}/noise_rmse"]        = float(m["noise_rmse"])
+                # Gap: positive means transformer is worse than MSAR
+                log[f"eval/{ds}/gap_vs_msar"]       = tr_val_mean - float(m["msar_val_rmse"])
+                # Ratio: <1 means transformer beats MSAR
+                if float(m["msar_val_rmse"]) > 0:
+                    log[f"eval/{ds}/ratio_vs_msar"] = tr_val_mean / float(m["msar_val_rmse"])
+            wandb_run.log(log)
 
         rows.append({
             "dataset":            ds,
@@ -244,10 +302,23 @@ def main():
     display_cols = ["dataset", "msar_val_rmse", "tr_val_rmse_mean", "tr_val_rmse_std", "noise_rmse"]
     print(df[display_cols].to_string(index=False))
 
+    # Log aggregate summary metrics to W&B
+    if wandb_run is not None:
+        valid = df.dropna(subset=["msar_val_rmse", "tr_val_rmse_mean"])
+        wandb_run.summary["mean_tr_val_rmse"]     = float(df["tr_val_rmse_mean"].mean())
+        wandb_run.summary["mean_gap_vs_msar"]     = float(
+            (valid["tr_val_rmse_mean"] - valid["msar_val_rmse"]).mean()
+        )
+        wandb_run.summary["n_datasets_beat_msar"] = int(
+            (valid["tr_val_rmse_mean"] < valid["msar_val_rmse"]).sum()
+        )
+        wandb_run.finish()
+        print(f"\nW&B run finished: {wandb_run.url}")
+
     if args.experiment_name:
         out_path = f"results_{args.experiment_name}.csv"
         df.to_csv(out_path, index=False)
-        print(f"\nResults saved to {out_path}")
+        print(f"Results saved to {out_path}")
 
 
 if __name__ == "__main__":

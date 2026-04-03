@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 
 import numpy as np
 import torch
@@ -31,7 +31,7 @@ def resolve_device(device_str: str) -> torch.device:
 
 
 # ============================================================
-# Eval loop — always uses last position (predict_next)
+# Eval loop
 # ============================================================
 
 @torch.no_grad()
@@ -40,17 +40,12 @@ def eval_loop(
     loader: DataLoader,
     device: torch.device,
 ) -> Tuple[float, float]:
-    """
-    Evaluate model on a DataLoader. Uses predict_next() which returns
-    only the last position forecast — correct for one-step-ahead evaluation
-    regardless of how the model was trained.
-    """
     model.eval()
     errs: List[np.ndarray] = []
     for x, y, _s in loader:
         x = x.to(device)
         y = y.to(device)
-        yhat = model.predict_next(x)   # (B, 1)
+        yhat = model.predict_next(x)
         e = (y - yhat).detach().cpu().numpy().reshape(-1)
         errs.append(e)
     model.train()
@@ -61,7 +56,7 @@ def eval_loop(
 
 
 # ============================================================
-# Decoder-style iid training (dense next-step supervision)
+# Decoder-style iid training with W&B logging
 # ============================================================
 
 def train_iid(
@@ -72,21 +67,19 @@ def train_iid(
     batch_size: int,
     lr: float,
     device: torch.device,
+    wandb_run=None,
 ) -> None:
     """
     Decoder-style training on fresh synthetic MSAR series.
 
-    At every step:
-      - Sample batch_size series windows: x (B, L, 1), y (B, 1)
-      - Build target sequence y_seq (B, L, 1):
-          positions 0..L-2: predict the next value already in the context (x[:, 1:, :])
-          position L-1:     predict the true next value y
-      - Forward pass returns predictions at all L positions: yhat (B, L, 1)
-      - Loss = mean MSE over all L predictions (dense supervision)
+    Dense next-step supervision: position t predicts t+1 for all L positions
+    simultaneously, giving L times more gradient signal per forward pass.
 
-    This is equivalent to GPT-style next-token prediction training.
-    Gives L times more gradient signal per forward pass than supervising
-    only the final position, at negligible extra compute cost.
+    W&B logging (if wandb_run provided):
+      - train/loss         : MSE loss every 100 steps
+      - train/val_rmse     : validation RMSE every 100 steps
+      - train/grad_norm    : gradient norm every 100 steps — detects explosion/vanishing
+      - train/epoch        : how many times we've cycled through the pool
     """
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     loss_fn = torch.nn.MSELoss()
@@ -95,27 +88,42 @@ def train_iid(
     pbar = tqdm(range(steps), desc="train (iid, decoder)")
     for step in pbar:
         x, y = sampler.sample_batch(batch_size, context_len, device)
-        # x: (B, L, 1),  y: (B, 1)
 
-        # Build dense target: shift x forward by 1, append true next value
-        # y_seq[:, t, :] = x[:, t+1, :] for t < L-1
-        # y_seq[:, L-1, :] = y
         y_seq = torch.cat([x[:, 1:, :], y.unsqueeze(1)], dim=1)  # (B, L, 1)
 
         opt.zero_grad(set_to_none=True)
-        yhat = model(x)                  # (B, L, 1)
-        loss = loss_fn(yhat, y_seq)      # dense MSE over all L positions
+        yhat  = model(x)
+        loss  = loss_fn(yhat, y_seq)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+        # Compute gradient norm before clipping — useful for detecting instability
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
 
         if step % 100 == 0 or step == steps - 1:
             _, rmse_v = eval_loop(model, val_loader, device=device)
             pbar.set_postfix(loss=float(loss.item()), val_rmse=float(rmse_v))
 
+            if wandb_run is not None:
+                log_dict = {
+                    "train/loss":      float(loss.item()),
+                    "train/val_rmse":  float(rmse_v),
+                    "train/grad_norm": float(grad_norm),
+                    "train/step":      step,
+                }
+                # Log pool epoch if sampler has one (pool mode)
+                if hasattr(sampler, "_pool_epochs"):
+                    log_dict["train/pool_epoch"] = sampler._pool_epochs
+                wandb_run.log(log_dict, step=step)
+
+    # Log final training summary
+    if wandb_run is not None:
+        wandb_run.summary["final_train_loss"]    = float(loss.item())
+        wandb_run.summary["final_train_val_rmse"] = float(rmse_v)
+
 
 # ============================================================
-# Fixed-dataset training (kept for comparison)
+# Fixed-dataset training
 # ============================================================
 
 def train_fixed(
@@ -125,13 +133,13 @@ def train_fixed(
     steps: int,
     lr: float,
     device: torch.device,
+    wandb_run=None,
 ) -> None:
-    """Train on sliding windows of a single fixed dataset."""
-    opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    opt    = torch.optim.AdamW(model.parameters(), lr=lr)
     loss_fn = torch.nn.MSELoss()
 
     pbar = tqdm(range(steps), desc="train (fixed)")
-    it = iter(train_loader)
+    it   = iter(train_loader)
     for step in pbar:
         try:
             x, y, _s = next(it)
@@ -141,20 +149,25 @@ def train_fixed(
 
         x = x.to(device)
         y = y.to(device)
-
-        # Dense supervision for fixed training too
-        y_seq = torch.cat([x[:, 1:, :], y.unsqueeze(1)], dim=1)  # (B, L, 1)
+        y_seq = torch.cat([x[:, 1:, :], y.unsqueeze(1)], dim=1)
 
         opt.zero_grad(set_to_none=True)
-        yhat = model(x)               # (B, L, 1)
-        loss = loss_fn(yhat, y_seq)
+        yhat  = model(x)
+        loss  = loss_fn(yhat, y_seq)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
 
         if step % 100 == 0 or step == steps - 1:
             _, rmse_v = eval_loop(model, val_loader, device=device)
             pbar.set_postfix(loss=float(loss.item()), val_rmse=float(rmse_v))
+
+            if wandb_run is not None:
+                wandb_run.log({
+                    "train/loss":      float(loss.item()),
+                    "train/val_rmse":  float(rmse_v),
+                    "train/grad_norm": float(grad_norm),
+                }, step=step)
 
 
 # ============================================================
@@ -176,6 +189,7 @@ def train_one_dataset(
     device: str,
     training_mode: str = "iid",
     ar_coeff_scale: float = 0.6,
+    wandb_run=None,
 ) -> Dict[str, Any]:
     device = resolve_device(device)
     torch.manual_seed(seed)
@@ -222,12 +236,14 @@ def train_one_dataset(
             mix_exog_seasonal=0.07,
         )
         sampler = MSARBatchSampler(sampler_cfg, seed=seed)
-        train_iid(model, sampler, val_loader, steps, batch_size, lr, device)
+        train_iid(model, sampler, val_loader, steps, batch_size, lr, device,
+                  wandb_run=wandb_run)
     else:
         train_loader = DataLoader(
             ds_train, batch_size=batch_size, shuffle=True, drop_last=True
         )
-        train_fixed(model, train_loader, val_loader, steps, lr, device)
+        train_fixed(model, train_loader, val_loader, steps, lr, device,
+                    wandb_run=wandb_run)
 
     train_loader_eval = DataLoader(ds_train, batch_size=batch_size, shuffle=False)
     _, train_rmse = eval_loop(model, train_loader_eval, device)
@@ -251,21 +267,21 @@ def train_one_dataset(
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data_dir",      type=str,   default="generated_data")
-    ap.add_argument("--dataset",       type=str,   required=True)
-    ap.add_argument("--context_len",   type=int,   default=64)
-    ap.add_argument("--val_frac",      type=float, default=0.3)
-    ap.add_argument("--steps",         type=int,   default=2000)
-    ap.add_argument("--batch_size",    type=int,   default=128)
-    ap.add_argument("--lr",            type=float, default=3e-4)
-    ap.add_argument("--d_model",       type=int,   default=256)
-    ap.add_argument("--n_heads",       type=int,   default=4)
-    ap.add_argument("--n_layers",      type=int,   default=6)
-    ap.add_argument("--dropout",       type=float, default=0.1)
-    ap.add_argument("--seed",          type=int,   default=0)
-    ap.add_argument("--device",        type=str,   default="cuda")
-    ap.add_argument("--training_mode", type=str,   default="iid", choices=["iid", "fixed"])
-    ap.add_argument("--ar_coeff_scale",type=float, default=0.6)
+    ap.add_argument("--data_dir",       type=str,   default="generated_data")
+    ap.add_argument("--dataset",        type=str,   required=True)
+    ap.add_argument("--context_len",    type=int,   default=64)
+    ap.add_argument("--val_frac",       type=float, default=0.3)
+    ap.add_argument("--steps",          type=int,   default=2000)
+    ap.add_argument("--batch_size",     type=int,   default=128)
+    ap.add_argument("--lr",             type=float, default=3e-4)
+    ap.add_argument("--d_model",        type=int,   default=256)
+    ap.add_argument("--n_heads",        type=int,   default=4)
+    ap.add_argument("--n_layers",       type=int,   default=6)
+    ap.add_argument("--dropout",        type=float, default=0.1)
+    ap.add_argument("--seed",           type=int,   default=0)
+    ap.add_argument("--device",         type=str,   default="cuda")
+    ap.add_argument("--training_mode",  type=str,   default="iid", choices=["iid", "fixed"])
+    ap.add_argument("--ar_coeff_scale", type=float, default=0.6)
     args = ap.parse_args()
 
     npz_path = str(Path(args.data_dir) / f"{args.dataset}.npz")

@@ -6,3 +6,4 @@ statsmodels
 tqdm
 pyyaml
 scikit-learn
+wandb
