@@ -135,6 +135,8 @@ def main():
     if not args.no_wandb:
         try:
             import wandb
+            import os
+            os.environ["WANDB_MODE"] = "offline"  # save locally, sync after
             wandb_run = wandb.init(
                 project=args.wandb_project,
                 name=args.experiment_name,
