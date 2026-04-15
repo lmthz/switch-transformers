@@ -12,14 +12,14 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p logs
 
-source /home/${USER}/.conda/etc/profile.d/conda.sh 2>/dev/null || \
-    source /orcd/home/002/lizthorn/.conda/etc/profile.d/conda.sh 2>/dev/null || \
-    { module load miniforge && source "$(conda info --base)/etc/profile.d/conda.sh"; }
-
+# Use personal conda directly to avoid falling through to system miniforge
+# which uses a different Python and won't have wandb installed
+source /home/lizthorn/.conda/etc/profile.d/conda.sh
 conda activate switchgpu
 
 echo "=== Environment ==="
 python -c "import torch; print('cuda:', torch.cuda.is_available(), '| devices:', torch.cuda.device_count())"
+python -c "import wandb; print('wandb:', wandb.__version__)"
 echo ""
 
 # Check prerequisites
@@ -64,3 +64,4 @@ echo ""
 echo "=== Complete ==="
 echo "Results: results_decoder_3instances.csv"
 echo "Plot:    training_samples.png"
+echo "W&B:     run 'wandb sync wandb/' to upload logs"

@@ -80,9 +80,8 @@ tmux new -s run        # first time this session
 tmux attach -t run     # if session already exists
 
 cd switch-transformers
-conda activate gitfix
-git pull               # pull latest code changes
 conda activate switchgpu
+git pull               # pull latest code changes
 mkdir -p logs
 
 # Re-run transformer only (MSAR and data already cached)
