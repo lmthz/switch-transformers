@@ -12,10 +12,7 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p logs
 
-source /home/${USER}/.conda/etc/profile.d/conda.sh 2>/dev/null || \
-    source /orcd/home/002/lizthorn/.conda/etc/profile.d/conda.sh 2>/dev/null || \
-    { module load miniforge && source "$(conda info --base)/etc/profile.d/conda.sh"; }
-
+source /home/lizthorn/miniforge3/etc/profile.d/conda.sh
 conda activate switchgpu
 
 echo "=== Generating evaluation datasets (3 instances per type) ==="

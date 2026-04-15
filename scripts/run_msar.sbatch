@@ -12,13 +12,9 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p logs
 
-source /home/${USER}/.conda/etc/profile.d/conda.sh 2>/dev/null || \
-    source /orcd/home/002/lizthorn/.conda/etc/profile.d/conda.sh 2>/dev/null || \
-    { module load miniforge && source "$(conda info --base)/etc/profile.d/conda.sh"; }
-
+source /home/lizthorn/miniforge3/etc/profile.d/conda.sh
 conda activate switchgpu
 
-# Always delete old results and regenerate fresh
 if [ -f "msar_results.csv" ]; then
     echo "=== Deleting old msar_results.csv ==="
     rm msar_results.csv
