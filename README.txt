@@ -25,7 +25,6 @@ wandb login
 # W&B runs in offline mode automatically — logs saved locally.
 # After job finishes, sync from the login node:
 #   wandb sync wandb/offline-run-<id>
-# This uploads the run to wandb.ai.
 # To skip W&B entirely for a run, pass --no_wandb to run_compare.py
 
 mkdir -p logs
@@ -40,9 +39,9 @@ mkdir -p logs
 sbatch scripts/generate_data.sbatch
 
 # Track progress:
-squeue -u <kerb>                                    # check if still running
-ls -t logs/ | head -3                               # find log filename
-tail -f logs/sw_data_<jobid>.out                    # watch live output
+squeue -u <kerb>
+ls -t logs/ | head -3
+tail -f logs/sw_data_<jobid>.out
 # Wait until job disappears from squeue before continuing
 
 # Step 2 — run MSAR baseline on compute node
@@ -52,7 +51,7 @@ sbatch scripts/run_msar.sbatch
 
 # Track progress:
 squeue -u <kerb>
-tail -f logs/sw_msar_<jobid>.out                    # shows each dataset as it fits
+tail -f logs/sw_msar_<jobid>.out
 # Wait until job disappears from squeue before continuing
 
 # Step 3 — train transformer and compare
@@ -61,13 +60,13 @@ sbatch scripts/run_compare.sbatch
 
 # Track progress:
 squeue -u <kerb>
-tail -f logs/sw_transformer_<jobid>.out             # stdout (dataset results)
-tail -f logs/sw_transformer_<jobid>.err             # stderr (tqdm training progress)
+tail -f logs/sw_transformer_<jobid>.out
+tail -f logs/sw_transformer_<jobid>.err
 
-# After job finishes, sync W&B logs from login node:
-ls wandb/                                           # find offline run directory name
-wandb sync wandb/offline-run-<id>                   # sync that specific run
-# Then view results at wandb.ai/<your-username>/switch-transformers
+# After job finishes, sync W&B:
+ls wandb/
+wandb sync wandb/offline-run-<id>
+# View at wandb.ai/<your-username>/switch-transformers
 
 
 # ================================================================
@@ -77,10 +76,12 @@ wandb sync wandb/offline-run-<id>                   # sync that specific run
 ssh <kerb>@orcd-login.mit.edu
 tmux new -s run        # first time this session
 tmux attach -t run     # if session already exists
+# Note: tmux sessions are tied to a specific login node (login005/006/007).
+# If your session is missing, try: ssh login005 then tmux ls
 
 cd switch-transformers
 conda activate switchgpu
-git pull               # pull latest code changes
+git pull
 mkdir -p logs
 
 # Re-run transformer only (MSAR and data already cached)
@@ -88,10 +89,9 @@ sbatch scripts/run_compare.sbatch
 
 # Track progress:
 squeue -u <kerb>
-ls -t logs/ | head -3                               # find latest log
+ls -t logs/ | head -3
 tail -f logs/sw_transformer_<jobid>.out
-# Detach from tmux and leave running:
-Ctrl+b d
+Ctrl+b d               # detach from tmux
 
 # Come back later:
 ssh <kerb>@orcd-login.mit.edu
@@ -112,6 +112,37 @@ sbatch scripts/run_compare.sbatch # then re-run transformer
 
 
 # ================================================================
+# DATA DENSITY EXPERIMENTS
+# ================================================================
+
+# Runs after msar_results.csv and generated_data/ already exist.
+# Tests two axes of training data density:
+#   A:  Linear regression (Raventós replication, sanity check)
+#   B1: Process family coverage (AR only → full mixture)
+#   B2: AR order coverage (AR(2) only → AR(10))
+#   B3: Coefficient magnitude sweep
+#   C:  Training steps sweep (minimum data needed)
+#
+# B1/B2/B3 generate series on-the-fly (pool not used — training
+# distribution must vary per condition).
+# C uses the pre-generated pool.
+
+sbatch scripts/run_density.sbatch
+
+# Track progress:
+squeue -u <kerb>
+tail -f logs/sw_density_<jobid>.out
+tail -f logs/sw_density_<jobid>.err
+
+# After job finishes, sync W&B:
+ls wandb/
+wandb sync wandb/offline-run-<id>
+
+# Download results:
+scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_density_*.csv' ~/Downloads/
+
+
+# ================================================================
 # DOWNLOAD RESULTS (run from your local Mac terminal, not cluster)
 # ================================================================
 
@@ -125,20 +156,27 @@ scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/msar_results.csv' ~/Downloa
 # ================================================================
 
 # Compute nodes do not have outbound internet so W&B cannot log live.
-# Instead W&B saves logs locally during the job (offline mode).
+# W&B saves logs locally during the job (offline mode).
 # After the job finishes, sync from the login node:
 #   ls wandb/                          <- find the offline-run-<id> directory
 #   wandb sync wandb/offline-run-<id>  <- sync that run to wandb.ai
 #
 # View runs at: wandb.ai/<your-username>/switch-transformers
 #
-# What is logged:
+# What is logged (run_compare):
 #   train/loss          training MSE loss every 100 steps
-#   train/val_rmse      validation RMSE on A1 monitoring dataset every 100 steps
-#   train/grad_norm     gradient norm every 100 steps (detects instability)
+#   train/val_rmse      validation RMSE on A1 monitoring dataset
+#   train/grad_norm     gradient norm (detects instability)
 #   train/pool_epoch    how many times pool has been cycled through
-#   eval/<dataset>/...  per-dataset transformer vs MSAR results after training
+#   eval/<dataset>/...  per-dataset transformer vs MSAR results
 #   summary             mean RMSE, mean gap vs MSAR, n datasets beating MSAR
+#
+# What is logged (run_density):
+#   exp_a/M, exp_a/ood_rmse         linear regression results per M
+#   exp_b1/<preset>/...             per-family-preset results
+#   exp_b2/<order>/...              per-order-config results
+#   exp_b3/scale_<x>/...            per-coefficient-scale results
+#   exp_c/steps_<n>/...             per-step-count results
 
 
 # ================================================================
