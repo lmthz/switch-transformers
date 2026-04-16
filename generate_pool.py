@@ -18,6 +18,33 @@ import numpy as np
 
 from data.msar_sampler import MSARBatchSampler, MSARSamplerConfig
 
+FAMILY_PRESETS = {
+    "ar_only": dict(
+        mix_ar=0.60, mix_ar_near_unit=0.15, mix_ar_no_switch=0.15,
+        mix_arma=0.00, mix_arima1=0.00, mix_arima2=0.00,
+        mix_seasonal=0.00, mix_exog_const=0.05, mix_exog_sine=0.05,
+        mix_exog_seasonal=0.00,
+    ),
+    "ar_arma": dict(
+        mix_ar=0.35, mix_ar_near_unit=0.10, mix_ar_no_switch=0.10,
+        mix_arma=0.35, mix_arima1=0.00, mix_arima2=0.00,
+        mix_seasonal=0.00, mix_exog_const=0.05, mix_exog_sine=0.05,
+        mix_exog_seasonal=0.00,
+    ),
+    "ar_arma_arima": dict(
+        mix_ar=0.22, mix_ar_near_unit=0.07, mix_ar_no_switch=0.07,
+        mix_arma=0.18, mix_arima1=0.18, mix_arima2=0.10,
+        mix_seasonal=0.00, mix_exog_const=0.09, mix_exog_sine=0.09,
+        mix_exog_seasonal=0.00,
+    ),
+    "full": dict(
+        mix_ar=0.22, mix_ar_near_unit=0.05, mix_ar_no_switch=0.05,
+        mix_arma=0.13, mix_arima1=0.13, mix_arima2=0.07,
+        mix_seasonal=0.12, mix_exog_const=0.08, mix_exog_sine=0.08,
+        mix_exog_seasonal=0.07,
+    ),
+}
+
 
 def generate_pool(
     n_series: int,
@@ -27,6 +54,7 @@ def generate_pool(
     out_path: str,
     chunk_size: int = 512,
     ar_coeff_scale: float = 0.6,
+    family_preset: str = "full",
 ) -> None:
     """
     Generate n_series synthetic series and save to a single .npz file.
@@ -43,6 +71,12 @@ def generate_pool(
                         Default 0.6. Use 1.2 to cover evaluation datasets
                         with larger coefficients like A1 regime 1.
     """
+    if family_preset not in FAMILY_PRESETS:
+        raise ValueError(f"Unknown family_preset '{family_preset}'. "
+                         f"Choose from: {list(FAMILY_PRESETS.keys())}")
+    weights = FAMILY_PRESETS[family_preset]
+    print(f"family_preset={family_preset}")
+
     cfg = MSARSamplerConfig(
         series_len=series_len,
         burn_in=burn_in,
@@ -54,16 +88,7 @@ def generate_pool(
         sigma_hi=0.70,
         persistence_lo=0.85,
         persistence_hi=0.98,
-        mix_ar=0.22,
-        mix_ar_near_unit=0.05,
-        mix_ar_no_switch=0.05,
-        mix_arma=0.13,
-        mix_arima1=0.13,
-        mix_arima2=0.07,
-        mix_seasonal=0.12,
-        mix_exog_const=0.08,
-        mix_exog_sine=0.08,
-        mix_exog_seasonal=0.07,
+        **weights,
     )
     sampler = MSARBatchSampler(cfg, seed=seed)
 
@@ -125,6 +150,7 @@ def generate_pool(
         burn_in=np.array(burn_in),
         seed=np.array(seed),
         ar_coeff_scale=np.array(ar_coeff_scale),
+        family_preset=np.array(family_preset),
     )
 
     size_mb = Path(out_path).stat().st_size / 1e6
@@ -144,7 +170,12 @@ def main():
     ap.add_argument("--chunk_size",     type=int,   default=512)
     ap.add_argument(
         "--ar_coeff_scale", type=float, default=0.6,
-        help="AR coefficient scale (default 0.6). Use 1.2 to cover large coefficients."
+        help="AR coefficient scale (default 0.6)."
+    )
+    ap.add_argument(
+        "--family_preset", type=str, default="full",
+        choices=["full", "ar_only", "ar_arma", "ar_arma_arima"],
+        help="Family mixture preset (default: full)."
     )
     args = ap.parse_args()
 
@@ -156,6 +187,7 @@ def main():
         out_path=args.out,
         chunk_size=args.chunk_size,
         ar_coeff_scale=args.ar_coeff_scale,
+        family_preset=args.family_preset,
     )
 
 

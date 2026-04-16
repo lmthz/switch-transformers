@@ -29,6 +29,35 @@ from train_transformer import train_iid, eval_loop, resolve_device
 from train_transformer import MSARBatchSampler, MSARSamplerConfig
 from models.transformer_forecaster import TransformerConfig, CausalTransformerForecaster
 from data.synthetic_npz_dataset import make_train_val_datasets
+from torch.utils.data import ConcatDataset
+
+
+# One representative per process family for monitoring validation during training.
+VAL_MONITOR_DATASETS = [
+    "A1_ar2_coeffs_easy",      # AR switching
+    "C1_arma21_coeffs_var",    # ARMA
+    "D1_arima211",             # ARIMA
+    "F1_seasonal_sarimax",     # Seasonal
+    "G1_exogenous_only",       # Exogenous
+    "H2_ar1_near_unit_root",   # Near-unit-root
+]
+
+
+def get_val_monitor_loader(data_dir, context_len, val_frac, batch_size):
+    """
+    Build a combined validation DataLoader from one dataset per process family.
+    Gives a more balanced training signal than monitoring on A1 alone.
+    """
+    val_sets = []
+    for ds in VAL_MONITOR_DATASETS:
+        npz = Path(data_dir) / f"{ds}_r0.npz"
+        if npz.exists():
+            _, ds_val, _, _ = make_train_val_datasets(str(npz), context_len, val_frac)
+            val_sets.append(ds_val)
+    if not val_sets:
+        raise RuntimeError(f"No validation datasets found in {data_dir}")
+    combined = ConcatDataset(val_sets)
+    return DataLoader(combined, batch_size=batch_size, shuffle=False)
 
 
 DATASETS: List[str] = [
@@ -221,9 +250,7 @@ def main():
     if args.pool_path is not None:
         sampler.load_pool(args.pool_path)
 
-    first_npz = str(Path(data_dir) / f"{DATASETS[0]}_r0.npz")
-    _, ds_val_monitor, _, _ = make_train_val_datasets(first_npz, context_len, val_frac)
-    val_loader_monitor = DataLoader(ds_val_monitor, batch_size=batch_size, shuffle=False)
+    val_loader_monitor = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
 
     # ── Train ─────────────────────────────────────────────────────
     train_iid(

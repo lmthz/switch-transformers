@@ -32,10 +32,25 @@ fi
 
 POOL=series_pool.npz
 if [ ! -f "$POOL" ]; then
-    echo "=== Generating series pool for Experiment C ==="
-    python generate_pool.py --n_series 500000 --ar_coeff_scale 0.6 --out "$POOL"
+    echo "=== Generating full series pool ==="
+    python generate_pool.py --n_series 500000 --ar_coeff_scale 0.6 \
+        --family_preset full --out "$POOL"
 fi
-echo "=== Prerequisites OK ($N_FOUND dataset files, $POOL exists) ==="
+
+echo "=== Prerequisites OK ($N_FOUND dataset files) ==="
+echo ""
+
+B1_ARGS=""
+if [ -f "pool_b1_ar_only.npz" ];       then B1_ARGS="$B1_ARGS --pool_b1_ar_only pool_b1_ar_only.npz"; fi
+if [ -f "pool_b1_ar_arma.npz" ];       then B1_ARGS="$B1_ARGS --pool_b1_ar_arma pool_b1_ar_arma.npz"; fi
+if [ -f "pool_b1_ar_arma_arima.npz" ]; then B1_ARGS="$B1_ARGS --pool_b1_ar_arma_arima pool_b1_ar_arma_arima.npz"; fi
+if [ -f "series_pool.npz" ];            then B1_ARGS="$B1_ARGS --pool_b1_full series_pool.npz"; fi
+
+if [ -n "$B1_ARGS" ]; then
+    echo "=== B1 will use pre-generated pools: $B1_ARGS ==="
+else
+    echo "=== B1 will use on-the-fly generation (run generate_b1_pools.sbatch to speed up reruns) ==="
+fi
 echo ""
 
 echo "=== Running density experiments ==="
@@ -45,7 +60,8 @@ python run_density_experiment.py \
     --msar_csv msar_results.csv \
     --n_instances 3 \
     --exp_a_steps 25000 \
-    --exp_b_steps 25000
+    --exp_b_steps 25000 \
+    $B1_ARGS
 
 echo ""
 echo "=== Complete ==="

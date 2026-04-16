@@ -235,10 +235,35 @@ def train_and_eval(
     return results
 
 
+# One representative per process family for monitoring validation during training.
+# Using multiple families gives a more balanced signal than A1 alone.
+VAL_MONITOR_DATASETS = [
+    "A1_ar2_coeffs_easy",      # AR switching
+    "C1_arma21_coeffs_var",    # ARMA
+    "D1_arima211",             # ARIMA
+    "F1_seasonal_sarimax",     # Seasonal
+    "G1_exogenous_only",       # Exogenous
+    "H2_ar1_near_unit_root",   # Near-unit-root
+]
+
+
 def get_val_monitor_loader(data_dir, context_len, val_frac, batch_size):
-    npz = str(Path(data_dir) / f"{DATASETS[0]}_r0.npz")
-    _, ds_val, _, _ = make_train_val_datasets(npz, context_len, val_frac)
-    return DataLoader(ds_val, batch_size=batch_size, shuffle=False)
+    """
+    Build a combined validation DataLoader from one dataset per process family.
+    Gives a more balanced training signal than monitoring on A1 alone.
+    Missing files are skipped gracefully.
+    """
+    from torch.utils.data import ConcatDataset
+    val_sets = []
+    for ds in VAL_MONITOR_DATASETS:
+        npz = Path(data_dir) / f"{ds}_r0.npz"
+        if npz.exists():
+            _, ds_val, _, _ = make_train_val_datasets(str(npz), context_len, val_frac)
+            val_sets.append(ds_val)
+    if not val_sets:
+        raise RuntimeError(f"No validation datasets found in {data_dir}")
+    combined = ConcatDataset(val_sets)
+    return DataLoader(combined, batch_size=batch_size, shuffle=False)
 
 
 # ================================================================
@@ -350,11 +375,16 @@ def run_experiment_a(
 def run_experiment_b1(
     data_dir, device, msar_df,
     steps=25000, n_instances=3, seed=0, wandb_run=None,
+    b1_pools: dict = None,
 ) -> pd.DataFrame:
     """
     Train on subsets of the 10 process families; test on all 21 datasets.
     Wang et al. question: does AR training generalise to ARIMA / seasonal?
-    Cannot use pool — pool has fixed full-mixture family weights.
+
+    b1_pools: optional dict mapping preset name to pool path, e.g.
+      {"ar_only": "pool_b1_ar_only.npz", "full": "series_pool.npz"}
+      If a preset is not in b1_pools, on-the-fly generation is used.
+      Pre-generated pools make reruns much faster.
     """
     print("\n" + "="*60)
     print("EXPERIMENT B1: Process family coverage sweep")
@@ -376,9 +406,10 @@ def run_experiment_b1(
         np.random.seed(seed)
 
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
+        pool_for_preset = (b1_pools or {}).get(preset_name, None)
         sampler = build_sampler(
             ar_coeff_scale=0.6, seed=seed,
-            pool_path=None,
+            pool_path=pool_for_preset,
             family_weights=weights,
         )
 
@@ -628,7 +659,15 @@ def main():
     )
     ap.add_argument("--data_dir",      type=str,   default="generated_data")
     ap.add_argument("--pool_path",     type=str,   default=None,
-                    help="Required for Experiment C. Not used for B1/B2/B3.")
+                    help="Required for Experiment C. Not used for B2/B3.")
+    ap.add_argument("--pool_b1_ar_only",      type=str, default=None,
+                    help="Pre-generated pool for B1 ar_only preset.")
+    ap.add_argument("--pool_b1_ar_arma",      type=str, default=None,
+                    help="Pre-generated pool for B1 ar_arma preset.")
+    ap.add_argument("--pool_b1_ar_arma_arima",type=str, default=None,
+                    help="Pre-generated pool for B1 ar_arma_arima preset.")
+    ap.add_argument("--pool_b1_full",         type=str, default=None,
+                    help="Pre-generated pool for B1 full preset.")
     ap.add_argument("--msar_csv",      type=str,   default="msar_results.csv")
     ap.add_argument("--n_instances",   type=int,   default=3)
     ap.add_argument("--seed",          type=int,   default=0)
@@ -700,10 +739,17 @@ def main():
         saved.append("results_density_exp_a.csv")
 
     if "B1" in args.experiments:
+        b1_pools = {}
+        if args.pool_b1_ar_only:       b1_pools["ar_only"]       = args.pool_b1_ar_only
+        if args.pool_b1_ar_arma:       b1_pools["ar_arma"]       = args.pool_b1_ar_arma
+        if args.pool_b1_ar_arma_arima: b1_pools["ar_arma_arima"] = args.pool_b1_ar_arma_arima
+        if args.pool_b1_full:          b1_pools["full"]          = args.pool_b1_full
+
         df = run_experiment_b1(
             data_dir=args.data_dir, device=device, msar_df=msar_df,
             steps=args.exp_b_steps, n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
+            b1_pools=b1_pools if b1_pools else None,
         )
         df.to_csv("results_density_exp_b1.csv", index=False)
         saved.append("results_density_exp_b1.csv")

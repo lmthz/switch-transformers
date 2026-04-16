@@ -25,7 +25,7 @@ wandb login
 # W&B runs in offline mode automatically — logs saved locally.
 # After job finishes, sync from the login node:
 #   wandb sync wandb/offline-run-<id>
-# To skip W&B entirely for a run, pass --no_wandb to run_compare.py
+# To skip W&B entirely for a run, pass --no_wandb
 
 mkdir -p logs
 
@@ -115,18 +115,21 @@ sbatch scripts/run_compare.sbatch # then re-run transformer
 # DATA DENSITY EXPERIMENTS
 # ================================================================
 
-# Runs after msar_results.csv and generated_data/ already exist.
 # Tests two axes of training data density:
 #   A:  Linear regression (Raventós replication, sanity check)
 #   B1: Process family coverage (AR only → full mixture)
 #   B2: AR order coverage (AR(2) only → AR(10))
 #   B3: Coefficient magnitude sweep
-#   C:  Training steps sweep (minimum data needed)
+#   C:  Training steps sweep
 #
-# B1/B2/B3 generate series on-the-fly (pool not used — training
-# distribution must vary per condition).
-# C uses the pre-generated pool.
+# Prerequisites: msar_results.csv and generated_data/ must exist.
+#
+# Optional but recommended: pre-generate B1 pools first on a CPU node.
+# This makes B1 reruns much faster (loads pool instead of generating on-the-fly).
+sbatch scripts/generate_b1_pools.sbatch
+squeue -u <kerb>   # wait until done
 
+# Then run the density experiments:
 sbatch scripts/run_density.sbatch
 
 # Track progress:
@@ -165,7 +168,7 @@ scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/msar_results.csv' ~/Downloa
 #
 # What is logged (run_compare):
 #   train/loss          training MSE loss every 100 steps
-#   train/val_rmse      validation RMSE on A1 monitoring dataset
+#   train/val_rmse      validation RMSE across 6 representative datasets
 #   train/grad_norm     gradient norm (detects instability)
 #   train/pool_epoch    how many times pool has been cycled through
 #   eval/<dataset>/...  per-dataset transformer vs MSAR results
@@ -192,6 +195,7 @@ ls results_*.csv                              # list result files
 ls generated_data/*_r0.npz | wc -l           # count evaluation datasets
 ls -la msar_results.csv                       # check MSAR results exist
 ls -la series_pool.npz                        # check pool exists
+ls pool_b1_*.npz                              # check B1 pools exist
 cat ~/.netrc | grep wandb                     # check W&B credentials saved
 ls wandb/                                     # list offline W&B run directories
 wandb sync wandb/offline-run-<id>             # sync specific run to website
