@@ -47,9 +47,9 @@ if [ -f "pool_b1_ar_arma_arima.npz" ]; then B1_ARGS="$B1_ARGS --pool_b1_ar_arma_
 if [ -f "series_pool.npz" ];            then B1_ARGS="$B1_ARGS --pool_b1_full series_pool.npz"; fi
 
 if [ -n "$B1_ARGS" ]; then
-    echo "=== B1 will use pre-generated pools: $B1_ARGS ==="
+    echo "=== B1 will use pre-generated pools ==="
 else
-    echo "=== B1 will use on-the-fly generation (run generate_b1_pools.sbatch to speed up reruns) ==="
+    echo "=== B1 will use on-the-fly generation ==="
 fi
 echo ""
 
@@ -59,8 +59,8 @@ python run_density_experiment.py \
     --pool_path "$POOL" \
     --msar_csv msar_results.csv \
     --n_instances 3 \
-    --exp_a_steps 25000 \
-    --exp_b_steps 25000 \
+    --exp_a_steps 10000 \
+    --exp_b_steps 10000 \
     $B1_ARGS
 
 echo ""

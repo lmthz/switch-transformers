@@ -673,9 +673,9 @@ def main():
     ap.add_argument("--seed",          type=int,   default=0)
     ap.add_argument("--no_wandb",      action="store_true")
     ap.add_argument("--wandb_project", type=str,   default="switch-transformers")
-    ap.add_argument("--exp_b_steps",   type=int,   default=25000,
+    ap.add_argument("--exp_b_steps",   type=int,   default=10000,
                     help="Steps for B1/B2/B3 (default 25000, based on convergence from W&B).")
-    ap.add_argument("--exp_a_steps",   type=int,   default=25000,
+    ap.add_argument("--exp_a_steps",   type=int,   default=10000,
                     help="Steps for Experiment A (default 25000).")
     args = ap.parse_args()
 

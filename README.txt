@@ -125,7 +125,6 @@ sbatch scripts/run_compare.sbatch # then re-run transformer
 # Prerequisites: msar_results.csv and generated_data/ must exist.
 #
 # Optional but recommended: pre-generate B1 pools first on a CPU node.
-# This makes B1 reruns much faster (loads pool instead of generating on-the-fly).
 sbatch scripts/generate_b1_pools.sbatch
 squeue -u <kerb>   # wait until done
 

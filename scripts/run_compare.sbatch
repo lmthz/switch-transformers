@@ -40,7 +40,7 @@ POOL=series_pool.npz
 if [ -f "$POOL" ]; then
     echo "=== Pool already exists, skipping ==="
 else
-    echo "=== Generating series pool on compute node CPUs (~15 min) ==="
+    echo "=== Generating series pool on compute node CPUs ==="
     python generate_pool.py --n_series 500000 --ar_coeff_scale 0.6 --out "$POOL"
 fi
 echo ""
@@ -49,7 +49,7 @@ echo "=== Training transformer and evaluating ==="
 python run_compare.py \
     --pool_path "$POOL" \
     --msar_csv msar_results.csv \
-    --steps 100000 \
+    --steps 10000 \
     --ar_coeff_scale 0.6 \
     --n_instances 3 \
     --experiment_name decoder_3instances
