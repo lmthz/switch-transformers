@@ -40,18 +40,24 @@ fi
 echo "=== Prerequisites OK ($N_FOUND dataset files) ==="
 echo ""
 
+# B1 pool args
 B1_ARGS=""
 if [ -f "pool_b1_ar_only.npz" ];       then B1_ARGS="$B1_ARGS --pool_b1_ar_only pool_b1_ar_only.npz"; fi
 if [ -f "pool_b1_ar_arma.npz" ];       then B1_ARGS="$B1_ARGS --pool_b1_ar_arma pool_b1_ar_arma.npz"; fi
 if [ -f "pool_b1_ar_arma_arima.npz" ]; then B1_ARGS="$B1_ARGS --pool_b1_ar_arma_arima pool_b1_ar_arma_arima.npz"; fi
 if [ -f "series_pool.npz" ];            then B1_ARGS="$B1_ARGS --pool_b1_full series_pool.npz"; fi
 
-if [ -n "$B1_ARGS" ]; then
-    echo "=== B1 will use pre-generated pools ==="
-else
-    echo "=== B1 will use on-the-fly generation ==="
-fi
-echo ""
+# B3 pool args — scale=0.6 reuses series_pool.npz
+B3_ARGS=""
+if [ -f "pool_b3_0.1.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_1 pool_b3_0.1.npz"; fi
+if [ -f "pool_b3_0.2.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_2 pool_b3_0.2.npz"; fi
+if [ -f "pool_b3_0.3.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_3 pool_b3_0.3.npz"; fi
+if [ -f "pool_b3_0.4.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_4 pool_b3_0.4.npz"; fi
+if [ -f "pool_b3_0.5.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_5 pool_b3_0.5.npz"; fi
+if [ -f "series_pool.npz" ];   then B3_ARGS="$B3_ARGS --pool_b3_0_6 series_pool.npz"; fi
+if [ -f "pool_b3_0.8.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_8 pool_b3_0.8.npz"; fi
+if [ -f "pool_b3_1.0.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_1_0 pool_b3_1.0.npz"; fi
+if [ -f "pool_b3_1.2.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_1_2 pool_b3_1.2.npz"; fi
 
 echo "=== Running density experiments ==="
 python run_density_experiment.py \
@@ -61,7 +67,8 @@ python run_density_experiment.py \
     --n_instances 3 \
     --exp_a_steps 10000 \
     --exp_b_steps 10000 \
-    $B1_ARGS
+    $B1_ARGS \
+    $B3_ARGS
 
 echo ""
 echo "=== Complete ==="
