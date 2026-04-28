@@ -270,101 +270,239 @@ def get_val_monitor_loader(data_dir, context_len, val_frac, batch_size):
 # EXPERIMENT A — Linear regression (Raventós replication)
 # ================================================================
 
+# ----------------------------------------------------------------
+# Small GPT-style transformer for Experiment A.
+# Accepts (B, L, token_dim) input unlike CausalTransformerForecaster
+# which is fixed to (B, L, 1). This is necessary for d>1 regression
+# where each token is a d+1 dimensional (x, y) vector.
+# ----------------------------------------------------------------
+
+class ICLTransformer(torch.nn.Module):
+    """
+    GPT-style decoder-only transformer for ICL regression.
+
+    Follows Raventós et al. (2023) implementation:
+      - Input sequence: interleaved x and y tokens
+        [x_1, y_1, x_2, y_2, ..., x_n, y_n, x_query]
+        where each token is a d-dimensional vector (x) or scalar (y)
+        padded to token_dim = d
+      - At each y position, predict the corresponding y value
+      - At test time, query is x_{n+1} and we read off the y prediction
+      - Causal mask prevents future leakage
+    """
+    def __init__(self, token_dim: int, d_model: int = 256,
+                 n_heads: int = 8, n_layers: int = 12,
+                 max_seq_len: int = 256, dropout: float = 0.0):
+        super().__init__()
+        self.token_dim = token_dim
+        self.d_model   = d_model
+        self.in_proj   = torch.nn.Linear(token_dim, d_model)
+        self.pos_emb   = torch.nn.Parameter(
+            torch.zeros(1, max_seq_len, d_model))
+        layer = torch.nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=n_heads,
+            dim_feedforward=4*d_model, dropout=dropout,
+            batch_first=True, activation="gelu", norm_first=True,
+        )
+        self.decoder  = torch.nn.TransformerEncoder(layer, num_layers=n_layers)
+        self.out_proj = torch.nn.Linear(d_model, 1)
+        torch.nn.init.normal_(self.pos_emb, std=0.02)
+
+    def _causal_mask(self, L, device):
+        return torch.triu(
+            torch.ones(L, L, device=device, dtype=torch.bool), diagonal=1)
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        """tokens: (B, L, token_dim) -> (B, L, 1) predictions"""
+        B, L, _ = tokens.shape
+        h = self.in_proj(tokens) + self.pos_emb[:, :L, :]
+        h = self.decoder(h, mask=self._causal_mask(L, tokens.device))
+        return self.out_proj(h)  # (B, L, 1)
+
+    def predict_last(self, tokens: torch.Tensor) -> torch.Tensor:
+        """Predict y for the last token in the sequence. (B, 1)"""
+        return self.forward(tokens)[:, -1, :]
+
+
+def build_icl_sequence(
+    betas: np.ndarray,   # (B, d)
+    n_examples: int,     # number of in-context (x,y) pairs shown
+    noise_sigma: float,
+    d: int,
+    rng: np.random.Generator,
+) -> tuple:
+    """
+    Build ICL sequences following Raventós et al.
+
+    Input sequence format (2*n_examples + 1 tokens):
+      [x_1, y_1_pad, x_2, y_2_pad, ..., x_n, y_n_pad, x_query]
+    where:
+      x_i tokens: d-dimensional, padded with 0 in last position
+      y_i tokens: d-dimensional, first d-1 dims = 0, last dim = y_i
+    This interleaved format matches the Garg/Raventós implementation.
+
+    Returns:
+      tokens:  (B, 2n+1, d)  — full input sequence
+      targets: (B, n)        — true y values at each y position
+      y_query: (B,)          — true y for the final query
+    """
+    B = betas.shape[0]
+    # In-context x examples
+    x_ic   = rng.standard_normal((B, n_examples, d)).astype(np.float32)
+    noise  = rng.normal(0, noise_sigma, (B, n_examples)).astype(np.float32)
+    y_ic   = np.einsum("bd,bnd->bn", betas, x_ic) + noise  # (B, n)
+
+    # Query x (no y shown)
+    x_q    = rng.standard_normal((B, 1, d)).astype(np.float32)
+    noise_q = rng.normal(0, noise_sigma, (B,)).astype(np.float32)
+    y_q    = np.einsum("bd,bd->b", betas, x_q[:, 0, :]) + noise_q
+
+    # Build interleaved token sequence [x1, y1_pad, x2, y2_pad, ..., xn, yn_pad, x_query]
+    tokens = np.zeros((B, 2 * n_examples + 1, d), dtype=np.float32)
+    for i in range(n_examples):
+        tokens[:, 2*i,   :] = x_ic[:, i, :]        # x token: full d dims
+        tokens[:, 2*i+1, d-1] = y_ic[:, i]         # y token: value in last dim
+    tokens[:, -1, :] = x_q[:, 0, :]                # query x token
+
+    return tokens, y_ic, y_q
+
+
 def run_experiment_a(
-    device, seed=0, d=1, context_len=64,
-    steps=25000, batch_size=128, wandb_run=None,
+    device, seed=0, d=10, context_len=40,
+    steps=50000, batch_size=64, wandb_run=None,
 ) -> pd.DataFrame:
     """
-    Vary M (distinct beta vectors in training pool) and measure OOD RMSE.
-    Below threshold M*: transformer only learned the M training tasks.
-    Above M*: transformer learned a general regression algorithm.
+    Replication of Raventós et al. (2023) Experiment 1.
+
+    Setup (matching paper as closely as possible):
+      - d=10 dimensional linear regression: y = beta @ x + N(0, 0.1)
+      - beta vectors drawn from N(0, I_d) — same prior as Raventós
+      - Sequence format: interleaved [x1, y1, x2, y2, ..., xn, yn, x_query]
+        each token is d-dimensional (y tokens padded)
+      - context_len=40 in-context examples — matches Raventós n=40
+      - Model: GPT-style transformer with d_model=256, 8 heads, 12 layers
+        (matches Raventós architecture scale)
+      - Vary M (number of distinct beta vectors in training pool) from 4 to 16384
+      - Evaluate OOD RMSE on fresh beta vectors never seen in training
+      - Baseline: ridge regression (optimal with Gaussian prior) — approaches
+        noise floor sigma=0.1 with enough context
+
+    Expected result (Raventós Fig 2):
+      Below M*: OOD RMSE >> noise floor (transformer specialised to training betas)
+      Above M*: OOD RMSE approaches noise floor (transformer learned general algorithm)
     """
     print("\n" + "="*60)
-    print("EXPERIMENT A: Linear regression (Raventós replication)")
+    print("EXPERIMENT A: Linear regression (Raventós et al. 2023 replication)")
     print(f"  d={d}  context_len={context_len}  steps={steps}")
+    print(f"  token_dim={d}  sequence_len={2*context_len+1}")
+    print(f"  model: d_model=256, n_heads=8, n_layers=12 (matches Raventós)")
     print("="*60)
 
     M_values = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 4096, 16384]
     noise_sigma = 0.1
-    rows = []
+    seq_len     = 2 * context_len + 1   # interleaved sequence length
+    rows        = []
+    rng         = np.random.default_rng(seed)
 
     for M in M_values:
         print(f"\n--- M={M} distinct beta vectors ---")
         torch.manual_seed(seed)
-        np.random.seed(seed)
-        rng = np.random.default_rng(seed)
+        np_rng = np.random.default_rng(seed)
 
-        beta_pool = rng.standard_normal((M,)).astype(np.float32)  # M scalars
+        # Pre-draw M distinct beta vectors from N(0, I_d) — matches Raventós prior
+        beta_pool = np_rng.standard_normal((M, d)).astype(np.float32)  # (M, d)
 
-        cfg = TransformerConfig(
-            context_len=context_len, d_model=128,
-            n_heads=4, n_layers=4, dropout=0.0,
-        )
-        model = CausalTransformerForecaster(cfg).to(device)
+        # GPT-style transformer matching Raventós architecture
+        model = ICLTransformer(
+            token_dim=d, d_model=256, n_heads=8, n_layers=12,
+            max_seq_len=seq_len + 10, dropout=0.0,
+        ).to(device)
         model.train()
-        opt = torch.optim.AdamW(model.parameters(), lr=3e-4)
-        loss_fn = torch.nn.MSELoss()
+        opt      = torch.optim.AdamW(model.parameters(), lr=1e-4)
+        loss_fn  = torch.nn.MSELoss()
+        sched    = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=steps)
 
         t0 = time.time()
         for step in range(steps):
-            B = batch_size
-            betas = beta_pool[np.random.randint(0, M, size=B)]  # (B,)
-            x     = np.random.standard_normal((B, context_len)).astype(np.float32)
-            noise = np.random.normal(0, noise_sigma, (B, context_len)).astype(np.float32)
-            y     = betas[:, None] * x + noise  # (B, L)
+            B     = batch_size
+            # Sample B tasks from the M-task pool
+            idx   = np_rng.integers(0, M, size=B)
+            betas = beta_pool[idx]  # (B, d)
 
-            x_t = torch.from_numpy(x[:, :, None]).to(device)
-            y_t = torch.from_numpy(y[:, :, None]).to(device)
-            y_target = torch.cat([y_t[:, 1:, :], y_t[:, -1:, :]], dim=1)
+            tokens, y_ic, y_q = build_icl_sequence(
+                betas, context_len, noise_sigma, d, np_rng)
+            # tokens: (B, 2*n+1, d)  y_ic: (B, n)  y_q: (B,)
+
+            tokens_t = torch.from_numpy(tokens).to(device)   # (B, seq_len, d)
+            # Target: predict y at each y-token position (odd indices) and query
+            # y positions in sequence: indices 1, 3, 5, ..., 2n-1, and final prediction
+            y_pos    = list(range(1, 2*context_len, 2))       # odd indices = y tokens
 
             opt.zero_grad(set_to_none=True)
-            loss = loss_fn(model(x_t), y_target)
+            preds    = model(tokens_t)                         # (B, seq_len, 1)
+
+            # Supervise all y positions
+            y_ic_t  = torch.from_numpy(y_ic).to(device)       # (B, n)
+            pred_ic = preds[:, y_pos, 0]                       # (B, n)
+            loss    = loss_fn(pred_ic, y_ic_t)
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
+            sched.step()
 
-            if step % 100 == 0 and wandb_run is not None:
-                wandb_run.log({f"exp_a/M{M}/loss": float(loss.item()),
-                               f"exp_a/M{M}/step": step})
+            if step % 500 == 0 and wandb_run is not None:
+                wandb_run.log({
+                    f"exp_a/M{M}/loss": float(loss.item()),
+                    f"exp_a/M{M}/step": step,
+                })
 
         elapsed = time.time() - t0
 
-        # Evaluate on OOD betas drawn fresh — never seen during training
+        # Evaluate on OOD betas drawn fresh from N(0, I_d) — never in training pool
         model.eval()
-        n_test    = 1024
-        test_beta = np.random.standard_normal(n_test).astype(np.float32)
-        test_x    = np.random.standard_normal((n_test, context_len)).astype(np.float32)
-        test_y    = test_beta[:, None] * test_x + np.random.normal(
-            0, noise_sigma, (n_test, context_len)).astype(np.float32)
+        n_test   = 512
+        np_rng_test = np.random.default_rng(seed + 9999)
+        test_betas  = np_rng_test.standard_normal((n_test, d)).astype(np.float32)
+        tokens_test, _, y_q_test = build_icl_sequence(
+            test_betas, context_len, noise_sigma, d, np_rng_test)
 
-        x_t    = torch.from_numpy(test_x[:, :, None]).to(device)
-        y_true = torch.from_numpy(test_y[:, -1:]).to(device)
+        tokens_t = torch.from_numpy(tokens_test).to(device)
+        y_true   = torch.from_numpy(y_q_test).to(device).unsqueeze(1)
+
         with torch.no_grad():
-            yhat = model.predict_next(x_t)
+            # Predict at query position (last token)
+            preds_test = model.predict_last(tokens_t)          # (B, 1)
         ood_rmse = float(torch.sqrt(
-            torch.nn.functional.mse_loss(yhat, y_true)).item())
+            torch.nn.functional.mse_loss(preds_test, y_true)).item())
 
+        # Ridge regression baseline (optimal with Gaussian prior, approaches noise floor)
+        # With n=40 examples and d=10, ridge approaches noise floor closely
+        ridge_rmse = noise_sigma * np.sqrt(1 + d / (context_len + d))
         ratio = ood_rmse / noise_sigma
+
         print(f"  OOD RMSE: {ood_rmse:.4f}  noise floor: {noise_sigma:.3f}  "
-              f"ratio: {ratio:.2f}x  [{elapsed:.0f}s]")
+              f"ridge approx: {ridge_rmse:.3f}  ratio: {ratio:.2f}x  [{elapsed:.0f}s]")
 
         rows.append({
             "M": M, "ood_rmse": ood_rmse,
             "noise_floor": noise_sigma,
+            "ridge_rmse": ridge_rmse,
             "ratio_to_noise": ratio,
-            "steps": steps,
+            "steps": steps, "d": d,
         })
 
         if wandb_run is not None:
             wandb_run.log({
-                "exp_a/M":               M,
-                "exp_a/ood_rmse":        ood_rmse,
-                "exp_a/ratio_to_noise":  ratio,
+                "exp_a/M":              M,
+                "exp_a/ood_rmse":       ood_rmse,
+                "exp_a/ridge_rmse":     ridge_rmse,
+                "exp_a/ratio_to_noise": ratio,
             })
 
     df = pd.DataFrame(rows)
     print("\nExperiment A summary:")
-    print(df[["M", "ood_rmse", "ratio_to_noise"]].to_string(index=False))
+    print(df[["M", "ood_rmse", "ridge_rmse", "ratio_to_noise"]].to_string(index=False))
     return df
 
 
@@ -511,13 +649,10 @@ def run_experiment_b2(
 def run_experiment_b3(
     data_dir, device, msar_df,
     steps=25000, n_instances=3, seed=0, wandb_run=None,
-    b3_pools: dict = None,
 ) -> pd.DataFrame:
     """
     Vary ar_coeff_scale within the AR family.
-    b3_pools: optional dict mapping scale (as string) to pool path, e.g.
-      {"0.1": "pool_b3_0.1.npz", "0.6": "series_pool.npz"}
-      If a scale is not in b3_pools, on-the-fly generation is used.
+    Cannot use pool — pool has fixed ar_coeff_scale=0.6.
     """
     print("\n" + "="*60)
     print("EXPERIMENT B3: AR coefficient magnitude sweep")
@@ -539,10 +674,9 @@ def run_experiment_b3(
         np.random.seed(seed)
 
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
-        pool_for_scale = (b3_pools or {}).get(str(scale), None)
         sampler = build_sampler(
             ar_coeff_scale=scale, seed=seed,
-            pool_path=pool_for_scale,
+            pool_path=None,
             family_weights=FAMILY_PRESETS["full"],
         )
 
@@ -672,16 +806,6 @@ def main():
                     help="Pre-generated pool for B1 ar_arma_arima preset.")
     ap.add_argument("--pool_b1_full",         type=str, default=None,
                     help="Pre-generated pool for B1 full preset.")
-    # B3 pool args — one per coefficient scale
-    ap.add_argument("--pool_b3_0_1",  type=str, default=None, help="Pool for B3 scale=0.1")
-    ap.add_argument("--pool_b3_0_2",  type=str, default=None, help="Pool for B3 scale=0.2")
-    ap.add_argument("--pool_b3_0_3",  type=str, default=None, help="Pool for B3 scale=0.3")
-    ap.add_argument("--pool_b3_0_4",  type=str, default=None, help="Pool for B3 scale=0.4")
-    ap.add_argument("--pool_b3_0_5",  type=str, default=None, help="Pool for B3 scale=0.5")
-    ap.add_argument("--pool_b3_0_6",  type=str, default=None, help="Pool for B3 scale=0.6")
-    ap.add_argument("--pool_b3_0_8",  type=str, default=None, help="Pool for B3 scale=0.8")
-    ap.add_argument("--pool_b3_1_0",  type=str, default=None, help="Pool for B3 scale=1.0")
-    ap.add_argument("--pool_b3_1_2",  type=str, default=None, help="Pool for B3 scale=1.2")
     ap.add_argument("--msar_csv",      type=str,   default="msar_results.csv")
     ap.add_argument("--n_instances",   type=int,   default=3)
     ap.add_argument("--seed",          type=int,   default=0)
@@ -778,22 +902,10 @@ def main():
         saved.append("results_density_exp_b2.csv")
 
     if "B3" in args.experiments:
-        b3_pools = {}
-        if args.pool_b3_0_1: b3_pools["0.1"] = args.pool_b3_0_1
-        if args.pool_b3_0_2: b3_pools["0.2"] = args.pool_b3_0_2
-        if args.pool_b3_0_3: b3_pools["0.3"] = args.pool_b3_0_3
-        if args.pool_b3_0_4: b3_pools["0.4"] = args.pool_b3_0_4
-        if args.pool_b3_0_5: b3_pools["0.5"] = args.pool_b3_0_5
-        if args.pool_b3_0_6: b3_pools["0.6"] = args.pool_b3_0_6
-        if args.pool_b3_0_8: b3_pools["0.8"] = args.pool_b3_0_8
-        if args.pool_b3_1_0: b3_pools["1.0"] = args.pool_b3_1_0
-        if args.pool_b3_1_2: b3_pools["1.2"] = args.pool_b3_1_2
-
         df = run_experiment_b3(
             data_dir=args.data_dir, device=device, msar_df=msar_df,
             steps=args.exp_b_steps, n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
-            b3_pools=b3_pools if b3_pools else None,
         )
         df.to_csv("results_density_exp_b3.csv", index=False)
         saved.append("results_density_exp_b3.csv")
