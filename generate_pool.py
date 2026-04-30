@@ -55,6 +55,8 @@ def generate_pool(
     chunk_size: int = 512,
     ar_coeff_scale: float = 0.6,
     family_preset: str = "full",
+    ar_order_lo: int = 1,
+    ar_order_hi: int = 10,
 ) -> None:
     """
     Generate n_series synthetic series and save to a single .npz file.
@@ -77,6 +79,7 @@ def generate_pool(
     weights = FAMILY_PRESETS[family_preset]
     print(f"family_preset={family_preset}")
 
+    print(f"ar_order_lo={ar_order_lo}  ar_order_hi={ar_order_hi}")
     cfg = MSARSamplerConfig(
         series_len=series_len,
         burn_in=burn_in,
@@ -88,6 +91,8 @@ def generate_pool(
         sigma_hi=0.70,
         persistence_lo=0.85,
         persistence_hi=0.98,
+        ar_order_lo=ar_order_lo,
+        ar_order_hi=ar_order_hi,
         **weights,
     )
     sampler = MSARBatchSampler(cfg, seed=seed)
@@ -151,6 +156,8 @@ def generate_pool(
         seed=np.array(seed),
         ar_coeff_scale=np.array(ar_coeff_scale),
         family_preset=np.array(family_preset),
+        ar_order_lo=np.array(ar_order_lo),
+        ar_order_hi=np.array(ar_order_hi),
     )
 
     size_mb = Path(out_path).stat().st_size / 1e6
@@ -177,6 +184,10 @@ def main():
         choices=["full", "ar_only", "ar_arma", "ar_arma_arima"],
         help="Family mixture preset (default: full)."
     )
+    ap.add_argument("--ar_order_lo", type=int, default=1,
+                    help="Min AR order (default 1).")
+    ap.add_argument("--ar_order_hi", type=int, default=10,
+                    help="Max AR order (default 10).")
     args = ap.parse_args()
 
     generate_pool(
@@ -188,6 +199,8 @@ def main():
         chunk_size=args.chunk_size,
         ar_coeff_scale=args.ar_coeff_scale,
         family_preset=args.family_preset,
+        ar_order_lo=args.ar_order_lo,
+        ar_order_hi=args.ar_order_hi,
     )
 
 

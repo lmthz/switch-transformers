@@ -32,32 +32,35 @@ fi
 
 POOL=series_pool.npz
 if [ ! -f "$POOL" ]; then
-    echo "=== Generating full series pool ==="
-    python generate_pool.py --n_series 500000 --ar_coeff_scale 0.6 \
-        --family_preset full --out "$POOL"
+    echo "[error] series_pool.npz not found. Run: sbatch scripts/generate_density_pools.sbatch"
+    exit 1
 fi
 
 echo "=== Prerequisites OK ($N_FOUND dataset files) ==="
 echo ""
 
-# B1 pool args
 B1_ARGS=""
-if [ -f "pool_b1_ar_only.npz" ];       then B1_ARGS="$B1_ARGS --pool_b1_ar_only pool_b1_ar_only.npz"; fi
-if [ -f "pool_b1_ar_arma.npz" ];       then B1_ARGS="$B1_ARGS --pool_b1_ar_arma pool_b1_ar_arma.npz"; fi
-if [ -f "pool_b1_ar_arma_arima.npz" ]; then B1_ARGS="$B1_ARGS --pool_b1_ar_arma_arima pool_b1_ar_arma_arima.npz"; fi
-if [ -f "series_pool.npz" ];            then B1_ARGS="$B1_ARGS --pool_b1_full series_pool.npz"; fi
+[ -f "pool_b1_ar_only.npz" ]       && B1_ARGS="$B1_ARGS --pool_b1_ar_only pool_b1_ar_only.npz"
+[ -f "pool_b1_ar_arma.npz" ]       && B1_ARGS="$B1_ARGS --pool_b1_ar_arma pool_b1_ar_arma.npz"
+[ -f "pool_b1_ar_arma_arima.npz" ] && B1_ARGS="$B1_ARGS --pool_b1_ar_arma_arima pool_b1_ar_arma_arima.npz"
+[ -f "series_pool.npz" ]            && B1_ARGS="$B1_ARGS --pool_b1_full series_pool.npz"
 
-# B3 pool args — scale=0.6 reuses series_pool.npz
+B2_ARGS=""
+[ -f "pool_b2_order2.npz" ] && B2_ARGS="$B2_ARGS --pool_b2_lo_order pool_b2_order2.npz"
+[ -f "pool_b2_order4.npz" ] && B2_ARGS="$B2_ARGS --pool_b2_mid_order pool_b2_order4.npz"
+[ -f "pool_b2_order6.npz" ] && B2_ARGS="$B2_ARGS --pool_b2_hi_order pool_b2_order6.npz"
+[ -f "series_pool.npz" ]     && B2_ARGS="$B2_ARGS --pool_b2_full series_pool.npz"
+
 B3_ARGS=""
-if [ -f "pool_b3_0.1.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_1 pool_b3_0.1.npz"; fi
-if [ -f "pool_b3_0.2.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_2 pool_b3_0.2.npz"; fi
-if [ -f "pool_b3_0.3.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_3 pool_b3_0.3.npz"; fi
-if [ -f "pool_b3_0.4.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_4 pool_b3_0.4.npz"; fi
-if [ -f "pool_b3_0.5.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_5 pool_b3_0.5.npz"; fi
-if [ -f "series_pool.npz" ];   then B3_ARGS="$B3_ARGS --pool_b3_0_6 series_pool.npz"; fi
-if [ -f "pool_b3_0.8.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_0_8 pool_b3_0.8.npz"; fi
-if [ -f "pool_b3_1.0.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_1_0 pool_b3_1.0.npz"; fi
-if [ -f "pool_b3_1.2.npz" ];  then B3_ARGS="$B3_ARGS --pool_b3_1_2 pool_b3_1.2.npz"; fi
+[ -f "pool_b3_0.1.npz" ] && B3_ARGS="$B3_ARGS --pool_b3_0_1 pool_b3_0.1.npz"
+[ -f "pool_b3_0.2.npz" ] && B3_ARGS="$B3_ARGS --pool_b3_0_2 pool_b3_0.2.npz"
+[ -f "pool_b3_0.3.npz" ] && B3_ARGS="$B3_ARGS --pool_b3_0_3 pool_b3_0.3.npz"
+[ -f "pool_b3_0.4.npz" ] && B3_ARGS="$B3_ARGS --pool_b3_0_4 pool_b3_0.4.npz"
+[ -f "pool_b3_0.5.npz" ] && B3_ARGS="$B3_ARGS --pool_b3_0_5 pool_b3_0.5.npz"
+[ -f "series_pool.npz" ]  && B3_ARGS="$B3_ARGS --pool_b3_0_6 series_pool.npz"
+[ -f "pool_b3_0.8.npz" ] && B3_ARGS="$B3_ARGS --pool_b3_0_8 pool_b3_0.8.npz"
+[ -f "pool_b3_1.0.npz" ] && B3_ARGS="$B3_ARGS --pool_b3_1_0 pool_b3_1.0.npz"
+[ -f "pool_b3_1.2.npz" ] && B3_ARGS="$B3_ARGS --pool_b3_1_2 pool_b3_1.2.npz"
 
 echo "=== Running density experiments ==="
 python run_density_experiment.py \
@@ -68,6 +71,7 @@ python run_density_experiment.py \
     --exp_a_steps 10000 \
     --exp_b_steps 10000 \
     $B1_ARGS \
+    $B2_ARGS \
     $B3_ARGS
 
 echo ""
