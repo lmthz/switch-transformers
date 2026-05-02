@@ -125,7 +125,7 @@ sbatch scripts/run_compare.sbatch # then re-run transformer
 # Prerequisites: msar_results.csv and generated_data/ must exist.
 #
 # Optional but recommended: pre-generate B1 pools first on a CPU node.
-sbatch scripts/generate_b1_pools.sbatch
+sbatch scripts/generate_density_pools.sbatch
 squeue -u <kerb>   # wait until done
 
 # Then run the density experiments:
