@@ -444,10 +444,11 @@ def run_experiment_b1(
 def run_experiment_b2(
     data_dir, device, msar_df,
     steps=25000, n_instances=3, seed=0, wandb_run=None,
+    b2_pools: dict = None,
 ) -> pd.DataFrame:
     """
     Restrict training AR order; test on H1 (AR(10)) vs A1-A3 (AR(2)).
-    Cannot use pool — pool has fixed ar_order_hi=10.
+    b2_pools: optional dict mapping order_name to pool path.
     """
     print("\n" + "="*60)
     print("EXPERIMENT B2: AR order coverage sweep")
@@ -474,10 +475,11 @@ def run_experiment_b2(
         np.random.seed(seed)
 
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
+        pool_for_order = (b2_pools or {}).get(name, None)
         sampler = build_sampler(
             ar_coeff_scale=0.6,
             ar_order_lo=lo, ar_order_hi=hi,
-            seed=seed, pool_path=None,
+            seed=seed, pool_path=pool_for_order,
             family_weights=FAMILY_PRESETS["full"],
         )
 
@@ -511,10 +513,11 @@ def run_experiment_b2(
 def run_experiment_b3(
     data_dir, device, msar_df,
     steps=25000, n_instances=3, seed=0, wandb_run=None,
+    b3_pools: dict = None,
 ) -> pd.DataFrame:
     """
     Vary ar_coeff_scale within the AR family.
-    Cannot use pool — pool has fixed ar_coeff_scale=0.6.
+    b3_pools: optional dict mapping scale string to pool path.
     """
     print("\n" + "="*60)
     print("EXPERIMENT B3: AR coefficient magnitude sweep")
@@ -536,9 +539,10 @@ def run_experiment_b3(
         np.random.seed(seed)
 
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
+        pool_for_scale = (b3_pools or {}).get(str(scale), None)
         sampler = build_sampler(
             ar_coeff_scale=scale, seed=seed,
-            pool_path=None,
+            pool_path=pool_for_scale,
             family_weights=FAMILY_PRESETS["full"],
         )
 
@@ -668,6 +672,19 @@ def main():
                     help="Pre-generated pool for B1 ar_arma_arima preset.")
     ap.add_argument("--pool_b1_full",         type=str, default=None,
                     help="Pre-generated pool for B1 full preset.")
+    ap.add_argument("--pool_b2_lo_order",  type=str, default=None)
+    ap.add_argument("--pool_b2_mid_order", type=str, default=None)
+    ap.add_argument("--pool_b2_hi_order",  type=str, default=None)
+    ap.add_argument("--pool_b2_full",      type=str, default=None)
+    ap.add_argument("--pool_b3_0_1",  type=str, default=None)
+    ap.add_argument("--pool_b3_0_2",  type=str, default=None)
+    ap.add_argument("--pool_b3_0_3",  type=str, default=None)
+    ap.add_argument("--pool_b3_0_4",  type=str, default=None)
+    ap.add_argument("--pool_b3_0_5",  type=str, default=None)
+    ap.add_argument("--pool_b3_0_6",  type=str, default=None)
+    ap.add_argument("--pool_b3_0_8",  type=str, default=None)
+    ap.add_argument("--pool_b3_1_0",  type=str, default=None)
+    ap.add_argument("--pool_b3_1_2",  type=str, default=None)
     ap.add_argument("--msar_csv",      type=str,   default="msar_results.csv")
     ap.add_argument("--n_instances",   type=int,   default=3)
     ap.add_argument("--seed",          type=int,   default=0)
@@ -755,19 +772,36 @@ def main():
         saved.append("results_density_exp_b1.csv")
 
     if "B2" in args.experiments:
+        b2_pools = {}
+        if args.pool_b2_lo_order:  b2_pools["lo_order"]  = args.pool_b2_lo_order
+        if args.pool_b2_mid_order: b2_pools["mid_order"] = args.pool_b2_mid_order
+        if args.pool_b2_hi_order:  b2_pools["hi_order"]  = args.pool_b2_hi_order
+        if args.pool_b2_full:      b2_pools["full"]      = args.pool_b2_full
         df = run_experiment_b2(
             data_dir=args.data_dir, device=device, msar_df=msar_df,
             steps=args.exp_b_steps, n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
+            b2_pools=b2_pools if b2_pools else None,
         )
         df.to_csv("results_density_exp_b2.csv", index=False)
         saved.append("results_density_exp_b2.csv")
 
     if "B3" in args.experiments:
+        b3_pools = {}
+        if args.pool_b3_0_1: b3_pools["0.1"] = args.pool_b3_0_1
+        if args.pool_b3_0_2: b3_pools["0.2"] = args.pool_b3_0_2
+        if args.pool_b3_0_3: b3_pools["0.3"] = args.pool_b3_0_3
+        if args.pool_b3_0_4: b3_pools["0.4"] = args.pool_b3_0_4
+        if args.pool_b3_0_5: b3_pools["0.5"] = args.pool_b3_0_5
+        if args.pool_b3_0_6: b3_pools["0.6"] = args.pool_b3_0_6
+        if args.pool_b3_0_8: b3_pools["0.8"] = args.pool_b3_0_8
+        if args.pool_b3_1_0: b3_pools["1.0"] = args.pool_b3_1_0
+        if args.pool_b3_1_2: b3_pools["1.2"] = args.pool_b3_1_2
         df = run_experiment_b3(
             data_dir=args.data_dir, device=device, msar_df=msar_df,
             steps=args.exp_b_steps, n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
+            b3_pools=b3_pools if b3_pools else None,
         )
         df.to_csv("results_density_exp_b3.csv", index=False)
         saved.append("results_density_exp_b3.csv")
