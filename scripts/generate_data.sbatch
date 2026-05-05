@@ -15,6 +15,7 @@ mkdir -p logs
 source /home/lizthorn/miniforge3/etc/profile.d/conda.sh
 conda activate switchgpu
 
-echo "=== Generating evaluation datasets (3 instances per type) ==="
-python data_generation.py --n_instances 3
+echo "=== Generating evaluation datasets (30 instances per type) ==="
+echo "=== Generates 630 .npz files: 21 dataset types x 30 random instances ==="
+python data_generation.py --n_instances 30
 echo "=== Done. Run next: sbatch scripts/run_msar.sbatch ==="

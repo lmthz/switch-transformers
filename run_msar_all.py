@@ -1,15 +1,5 @@
 # run_msar_all.py
-"""
-Run MSAR baseline on all evaluation datasets and save results to CSV.
-Run this once after data_generation.py — it is slow (~2-3 hours) because
-statsmodels EM fitting is expensive. Results are cached in msar_results.csv
-so run_compare.py can load them without re-running MSAR.
 
-Usage:
-    python run_msar_all.py                          # default: n_instances=3
-    python run_msar_all.py --n_instances 1          # single instance
-    python run_msar_all.py --out my_msar.csv        # custom output path
-"""
 from __future__ import annotations
 
 import argparse

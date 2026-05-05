@@ -20,6 +20,6 @@ if [ -f "msar_results.csv" ]; then
     rm msar_results.csv
 fi
 
-echo "=== Running MSAR on all 21 datasets ==="
+echo "=== Running MSAR on all 21 datasets (r0 instance only) ==="
 python run_msar_all.py --n_instances 3 --val_frac 0.3 --out msar_results.csv
 echo "=== Done. Run next: sbatch scripts/run_compare.sbatch ==="

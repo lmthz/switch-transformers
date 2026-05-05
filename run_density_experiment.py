@@ -68,6 +68,7 @@ from data.synthetic_npz_dataset import make_train_val_datasets
 
 
 # ── Dataset list ─────────────────────────────────────────────────
+# ── Full evaluation suite (used for D, E, general evaluation) ────
 DATASETS: List[str] = [
     "A1_ar2_coeffs_easy", "A2_ar2_coeffs_hard", "A3_ar2_coeffs_plus_var",
     "B1_ar2_variance", "B2_ar2_variance_big", "C1_arma21_coeffs_var",
@@ -78,6 +79,7 @@ DATASETS: List[str] = [
     "NS0_A1_no_switch_regime0", "NS1_A1_no_switch_regime1", "SW1_A1_single_switch",
 ]
 
+# ── Family groupings for full suite ───────────────────────────────
 AR_DATASETS       = ["A1_ar2_coeffs_easy", "A2_ar2_coeffs_hard", "A3_ar2_coeffs_plus_var",
                      "B1_ar2_variance", "B2_ar2_variance_big", "S1_sparse_switching",
                      "S2_frequent_switching", "H2_ar1_near_unit_root"]
@@ -85,6 +87,38 @@ ARMA_DATASETS     = ["C1_arma21_coeffs_var"]
 ARIMA_DATASETS    = ["D1_arima211", "D2_arima221", "D3_arima210"]
 SEASONAL_DATASETS = ["F1_seasonal_sarimax", "F2_seasonal_exog"]
 EXOG_DATASETS     = ["E1_drift_only", "E2_level_shift", "G1_exogenous_only"]
+
+# ── Clean evaluation suites per experiment axis ───────────────────
+# Each experiment varies exactly one axis. Datasets that vary a different
+# axis are excluded to avoid contamination.
+
+# B1 (family coverage): exclude H1/H2 (vary AR order, not family)
+# and A3 (varies both coefficients and sigma simultaneously)
+DATASETS_B1 = [
+    "A1_ar2_coeffs_easy", "A2_ar2_coeffs_hard",
+    "B1_ar2_variance", "B2_ar2_variance_big",         # AR family
+    "C1_arma21_coeffs_var",                            # ARMA family
+    "D1_arima211", "D2_arima221", "D3_arima210",       # ARIMA family
+    "F1_seasonal_sarimax", "F2_seasonal_exog",         # Seasonal family
+    "E1_drift_only", "E2_level_shift", "G1_exogenous_only",  # Exog family
+    "S1_sparse_switching", "S2_frequent_switching",    # Switching variants
+]
+
+# B2 (AR order): only datasets where order is the varying dimension
+# H1 is AR(10) — the OOD target. A1/A2 are AR(2) — in-distribution control.
+DATASETS_B2 = [
+    "A1_ar2_coeffs_easy", "A2_ar2_coeffs_hard",       # AR(2) control
+    "H1_ar10_coeffs",                                  # AR(10) OOD target
+]
+
+# B3 (coefficient magnitude): AR(2) datasets only, exclude A3 (confound),
+# H1 (AR(10)), H2 (AR(1))
+DATASETS_B3 = [
+    "A1_ar2_coeffs_easy", "A2_ar2_coeffs_hard",
+    "B1_ar2_variance", "B2_ar2_variance_big",
+    "S1_sparse_switching", "S2_frequent_switching",
+    "NS0_A1_no_switch_regime0", "NS1_A1_no_switch_regime1", "SW1_A1_single_switch",
+]
 
 
 # ── Family mix weight presets ─────────────────────────────────────
@@ -490,6 +524,7 @@ def run_experiment_b1(
         pool_for_preset = (b1_pools or {}).get(preset_name, None)
         sampler = build_sampler(
             ar_coeff_scale=0.6, seed=seed,
+            ar_order_lo=1, ar_order_hi=2,  # hold order fixed at AR(2)
             pool_path=pool_for_preset,
             family_weights=weights,
         )
@@ -497,6 +532,7 @@ def run_experiment_b1(
         results = train_and_eval(
             model, sampler, val_loader, steps, batch_size, lr, device,
             data_dir, n_instances, context_len, val_frac, msar_df,
+            datasets=DATASETS_B1,
             wandb_run=wandb_run, wandb_prefix=f"exp_b1/{preset_name}",
         )
 
@@ -567,6 +603,7 @@ def run_experiment_b2(
         results = train_and_eval(
             model, sampler, val_loader, steps, batch_size, lr, device,
             data_dir, n_instances, context_len, val_frac, msar_df,
+            datasets=DATASETS_B2,
             wandb_run=wandb_run, wandb_prefix=f"exp_b2/{name}",
         )
 
@@ -623,6 +660,7 @@ def run_experiment_b3(
         pool_for_scale = (b3_pools or {}).get(str(scale), None)
         sampler = build_sampler(
             ar_coeff_scale=scale, seed=seed,
+            ar_order_lo=1, ar_order_hi=2,  # hold order fixed at AR(2)
             pool_path=pool_for_scale,
             family_weights=FAMILY_PRESETS["full"],
         )
@@ -630,6 +668,7 @@ def run_experiment_b3(
         results = train_and_eval(
             model, sampler, val_loader, steps, batch_size, lr, device,
             data_dir, n_instances, context_len, val_frac, msar_df,
+            datasets=DATASETS_B3,
             wandb_run=wandb_run, wandb_prefix=f"exp_b3/scale_{scale}",
         )
 
@@ -695,13 +734,15 @@ def run_experiment_c(
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
         sampler = build_sampler(
             ar_coeff_scale=0.6, seed=seed,
-            pool_path=pool_path,       # uses pool — correct for Exp C
+            ar_order_lo=1, ar_order_hi=2,  # hold order fixed at AR(2)
+            pool_path=pool_path,
             family_weights=FAMILY_PRESETS["full"],
         )
 
         results = train_and_eval(
             model, sampler, val_loader, steps, batch_size, lr, device,
             data_dir, n_instances, context_len, val_frac, msar_df,
+            datasets=DATASETS_B1,
             wandb_run=wandb_run, wandb_prefix=f"exp_c/steps_{steps}",
         )
 
@@ -805,6 +846,7 @@ def run_experiment_d(
                 pool_path_d = str(candidate)
         sampler = build_sampler(
             ar_coeff_scale=0.6, seed=seed,
+            ar_order_lo=1, ar_order_hi=2,  # hold order fixed at AR(2)
             pool_path=pool_path_d,
             family_weights=FAMILY_PRESETS["full"],
         )
@@ -812,14 +854,14 @@ def run_experiment_d(
         train_iid(model, sampler, val_loader, steps, batch_size, lr, device)
 
         results = eval_suite(
-            model, data_dir, DATASETS, n_instances,
+            model, data_dir, DATASETS_B1, n_instances,
             context_len, val_frac, batch_size, device,
         )
 
         if msar_df is not None:
             gaps = [
                 results[ds] - float(msar_df.loc[ds, "msar_val_rmse"])
-                for ds in DATASETS
+                for ds in DATASETS_B1
                 if ds in results and ds in msar_df.index
                 and not np.isnan(float(msar_df.loc[ds, "msar_val_rmse"]))
             ]
@@ -932,8 +974,12 @@ def run_experiment_e(
                 candidate = Path(pool_dir_ar_only) / f"pool_e_ar_only_{M}.npz"
                 if candidate.exists():
                     pool_path_e = str(candidate)
+            # ar_only uses ar_order_hi=2 to hold order fixed
+            # full uses ar_order_hi=10 (standard)
+            order_hi = 2  # hold order fixed at AR(2) for all E conditions
             sampler = build_sampler(
                 ar_coeff_scale=0.6, seed=seed,
+                ar_order_lo=1, ar_order_hi=order_hi,
                 pool_path=pool_path_e,
                 family_weights=weights,
             )
@@ -941,14 +987,14 @@ def run_experiment_e(
             train_iid(model, sampler, val_loader, steps, batch_size, lr, device)
 
             results = eval_suite(
-                model, data_dir, DATASETS, n_instances,
+                model, data_dir, DATASETS_B1, n_instances,
                 context_len, val_frac, batch_size, device,
             )
 
             if msar_df is not None:
                 gaps = [
                     results[ds] - float(msar_df.loc[ds, "msar_val_rmse"])
-                    for ds in DATASETS
+                    for ds in DATASETS_B1
                     if ds in results and ds in msar_df.index
                     and not np.isnan(float(msar_df.loc[ds, "msar_val_rmse"]))
                 ]

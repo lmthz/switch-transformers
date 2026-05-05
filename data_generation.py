@@ -540,8 +540,8 @@ class MSSwitchGenerator:
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n_instances", type=int, default=3,
-                    help="Number of instances per dataset type (default 3). "
+    ap.add_argument("--n_instances", type=int, default=30,
+                    help="Number of instances per dataset type (default 30). "
                          "Each instance uses a different RNG seed, giving different "
                          "regime sequences but the same model parameters.")
     ap.add_argument("--n", type=int, default=1000, help="Series length (default 1000)")
