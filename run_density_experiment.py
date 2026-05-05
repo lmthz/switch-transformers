@@ -734,13 +734,268 @@ def run_experiment_c(
 # Main
 # ================================================================
 
+# EXPERIMENT D — Task diversity sweep (Raventós replication for time series)
+# ================================================================
+
+def run_experiment_d(
+    data_dir: str,
+    device: torch.device,
+    msar_df,
+    n_instances: int = 3,
+    seed: int = 0,
+    wandb_run=None,
+    pool_dir: str = None,
+) -> pd.DataFrame:
+    """
+    Vary number of distinct training series M while holding steps-per-series
+    constant. This directly replicates the Raventós M-axis in a time series
+    setting.
+
+    Raventós (2023) varied M (number of distinct beta vectors) and found a
+    critical threshold M* below which the transformer acts like the Bayesian
+    estimator over M training tasks, and above which it learns a general
+    algorithm matching ridge regression.
+
+    Here M is the pool size — the number of distinct parameter combinations
+    (AR coefficients, noise levels, regime sequences) available during training.
+    Steps are set to M // batch_size so each series is seen exactly once
+    per run, keeping steps-per-series = 1 across all M values.
+
+    If a Raventós-style phase transition exists in the time series setting,
+    we expect to see a critical M* below which performance is poor (transformer
+    specialised to training parameter combinations) and above which it
+    generalises to the evaluation datasets.
+
+    Note: each M value requires generating a fresh pool of that size on-the-fly
+    since the pre-generated pools have fixed size. This is slower but ensures
+    each series is genuinely distinct.
+    """
+    print("\n" + "="*60)
+    print("EXPERIMENT D: Task diversity sweep (Raventós replication)")
+    print(f"  n_instances={n_instances}")
+    print(f"  Steps = M // batch_size (each series seen exactly once)")
+    print("="*60)
+
+    context_len = 64
+    batch_size  = 128
+    lr          = 3e-4
+    val_frac    = 0.3
+
+    # M values — log-spaced from very small to large
+    # At M=128: steps = 1  (essentially no training)
+    # At M=500k: steps = 3906 (full pool, matches main run_compare)
+    M_values = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
+                65536, 131072, 262144, 500000]
+
+    val_loader = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
+    rows = []
+
+    for M in M_values:
+        steps = max(1, M // batch_size)
+        total_series = steps * batch_size
+        print(f"\n--- M={M:,} distinct series  steps={steps:,} ---")
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
+        model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
+        pool_path_d = None
+        if pool_dir is not None:
+            candidate = Path(pool_dir) / f"pool_d_full_{M}.npz"
+            if candidate.exists():
+                pool_path_d = str(candidate)
+        sampler = build_sampler(
+            ar_coeff_scale=0.6, seed=seed,
+            pool_path=pool_path_d,
+            family_weights=FAMILY_PRESETS["full"],
+        )
+
+        train_iid(model, sampler, val_loader, steps, batch_size, lr, device)
+
+        results = eval_suite(
+            model, data_dir, DATASETS, n_instances,
+            context_len, val_frac, batch_size, device,
+        )
+
+        if msar_df is not None:
+            gaps = [
+                results[ds] - float(msar_df.loc[ds, "msar_val_rmse"])
+                for ds in DATASETS
+                if ds in results and ds in msar_df.index
+                and not np.isnan(float(msar_df.loc[ds, "msar_val_rmse"]))
+            ]
+            results["mean_gap_vs_msar"] = float(np.mean(gaps)) if gaps else float("nan")
+
+        print(f"  mean_all={results['mean_all']:.4f}  "
+              f"mean_ar={results['mean_ar']:.4f}  "
+              f"mean_arima={results['mean_arima']:.4f}  "
+              f"mean_seasonal={results['mean_seasonal']:.4f}")
+        if "mean_gap_vs_msar" in results:
+            print(f"  mean_gap_vs_msar={results['mean_gap_vs_msar']:.4f}")
+
+        if wandb_run is not None:
+            wandb_run.log({
+                "exp_d/M":             M,
+                "exp_d/steps":         steps,
+                "exp_d/mean_all":      results["mean_all"],
+                "exp_d/mean_ar":       results["mean_ar"],
+                "exp_d/mean_arima":    results["mean_arima"],
+                "exp_d/mean_seasonal": results["mean_seasonal"],
+                **({
+                    "exp_d/mean_gap_vs_msar": results["mean_gap_vs_msar"]
+                } if "mean_gap_vs_msar" in results else {}),
+            })
+
+        row = {"M": M, "steps": steps, "total_series": total_series}
+        row.update({k: v for k, v in results.items() if isinstance(v, float)})
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    print("\nExperiment D summary:")
+    cols = ["M", "steps", "mean_all", "mean_ar", "mean_arima", "mean_seasonal"]
+    available = [c for c in cols if c in df.columns]
+    print(df[available].to_string(index=False))
+    return df
+
+
+# ================================================================
+# EXPERIMENT E — Task diversity × model class (2D sweep)
+# ================================================================
+
+def run_experiment_e(
+    data_dir: str,
+    device: torch.device,
+    msar_df,
+    n_instances: int = 3,
+    seed: int = 0,
+    wandb_run=None,
+    pool_dir_full: str = None,
+    pool_dir_ar_only: str = None,
+) -> pd.DataFrame:
+    """
+    Run Experiment D (pool size sweep) separately for ar_only and full
+    family presets. This asks whether the Raventós M* threshold depends
+    on which process families are in the training pool.
+
+    Two conditions on the M axis:
+      ar_only: transformer only trained on AR switching dynamics
+      full:    transformer trained on all 10 process families
+
+    If the curves converge at high M: with enough distinct examples the
+    transformer can generalise even from a restricted training distribution —
+    quantity of data overcomes quality of coverage.
+
+    If the curves stay separated at high M: model class coverage is a
+    fundamental constraint that more data cannot overcome — the transformer
+    cannot learn ARIMA or seasonal dynamics if it has never seen them,
+    regardless of how many AR examples it has seen.
+
+    Steps = M // batch_size so each series is seen exactly once per run,
+    matching Experiment D and the Raventós setup.
+    """
+    print("\n" + "="*60)
+    print("EXPERIMENT E: Task diversity x model class (2D sweep)")
+    print(f"  n_instances={n_instances}")
+    print(f"  Conditions: ar_only vs full family preset")
+    print(f"  Steps = M // batch_size (each series seen exactly once)")
+    print("="*60)
+
+    context_len = 64
+    batch_size  = 128
+    lr          = 3e-4
+    val_frac    = 0.3
+
+    M_values = [128, 256, 512, 1024, 2048, 4096, 8192, 16384,
+                32768, 65536, 131072, 262144, 500000]
+
+    val_loader = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
+    rows = []
+
+    for preset_name in ["ar_only", "full"]:
+        weights = FAMILY_PRESETS[preset_name]
+        print(f"\n{'='*40}")
+        print(f"Family preset: {preset_name}")
+        print(f"{'='*40}")
+
+        for M in M_values:
+            steps = max(1, M // batch_size)
+            print(f"\n--- {preset_name}  M={M:,}  steps={steps:,} ---")
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+
+            model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
+            pool_path_e = None
+            if preset_name == "full" and pool_dir_full is not None:
+                candidate = Path(pool_dir_full) / f"pool_d_full_{M}.npz"
+                if candidate.exists():
+                    pool_path_e = str(candidate)
+            elif preset_name == "ar_only" and pool_dir_ar_only is not None:
+                candidate = Path(pool_dir_ar_only) / f"pool_e_ar_only_{M}.npz"
+                if candidate.exists():
+                    pool_path_e = str(candidate)
+            sampler = build_sampler(
+                ar_coeff_scale=0.6, seed=seed,
+                pool_path=pool_path_e,
+                family_weights=weights,
+            )
+
+            train_iid(model, sampler, val_loader, steps, batch_size, lr, device)
+
+            results = eval_suite(
+                model, data_dir, DATASETS, n_instances,
+                context_len, val_frac, batch_size, device,
+            )
+
+            if msar_df is not None:
+                gaps = [
+                    results[ds] - float(msar_df.loc[ds, "msar_val_rmse"])
+                    for ds in DATASETS
+                    if ds in results and ds in msar_df.index
+                    and not np.isnan(float(msar_df.loc[ds, "msar_val_rmse"]))
+                ]
+                results["mean_gap_vs_msar"] = float(np.mean(gaps)) if gaps else float("nan")
+
+            print(f"  mean_all={results['mean_all']:.4f}  "
+                  f"mean_ar={results['mean_ar']:.4f}  "
+                  f"mean_arima={results['mean_arima']:.4f}  "
+                  f"mean_seasonal={results['mean_seasonal']:.4f}")
+
+            if wandb_run is not None:
+                wandb_run.log({
+                    f"exp_e/{preset_name}/M":             M,
+                    f"exp_e/{preset_name}/steps":         steps,
+                    f"exp_e/{preset_name}/mean_all":      results["mean_all"],
+                    f"exp_e/{preset_name}/mean_ar":       results["mean_ar"],
+                    f"exp_e/{preset_name}/mean_arima":    results["mean_arima"],
+                    f"exp_e/{preset_name}/mean_seasonal": results["mean_seasonal"],
+                    **({
+                        f"exp_e/{preset_name}/mean_gap_vs_msar": results["mean_gap_vs_msar"]
+                    } if "mean_gap_vs_msar" in results else {}),
+                })
+
+            row = {
+                "family_preset": preset_name,
+                "M": M,
+                "steps": steps,
+                "total_series": steps * batch_size,
+            }
+            row.update({k: v for k, v in results.items() if isinstance(v, float)})
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+    print("\nExperiment E summary:")
+    cols = ["family_preset", "M", "steps", "mean_all", "mean_ar",
+            "mean_arima", "mean_seasonal"]
+    available = [c for c in cols if c in df.columns]
+    print(df[available].to_string(index=False))
+    return df
+
 def main():
     ap = argparse.ArgumentParser(
         description="Data density experiments."
     )
     ap.add_argument(
-        "--experiments", nargs="+", default=["A", "B1", "B2", "B3", "C"],
-        choices=["A", "B1", "B2", "B3", "C"],
+        "--experiments", nargs="+", default=["A", "B1", "B2", "B3", "C", "D", "E"],
+        choices=["A", "B1", "B2", "B3", "C", "D", "E"],
     )
     ap.add_argument("--data_dir",      type=str,   default="generated_data")
     ap.add_argument("--pool_path",     type=str,   default=None,
@@ -766,6 +1021,12 @@ def main():
     ap.add_argument("--pool_b3_0_8",  type=str, default=None)
     ap.add_argument("--pool_b3_1_0",  type=str, default=None)
     ap.add_argument("--pool_b3_1_2",  type=str, default=None)
+    ap.add_argument("--pool_d_dir",         type=str, default=None,
+                    help="Directory with pool_d_full_{M}.npz files for Exp D.")
+    ap.add_argument("--pool_e_dir_full",    type=str, default=None,
+                    help="Directory with pool_d_full_{M}.npz files for Exp E full.")
+    ap.add_argument("--pool_e_dir_ar_only", type=str, default=None,
+                    help="Directory with pool_e_ar_only_{M}.npz files for Exp E.")
     ap.add_argument("--msar_csv",      type=str,   default="msar_results.csv")
     ap.add_argument("--n_instances",   type=int,   default=3)
     ap.add_argument("--seed",          type=int,   default=0)
@@ -788,7 +1049,7 @@ def main():
         print(f"[warning] {args.msar_csv} not found — gap vs MSAR will not be computed")
 
     # Check evaluation datasets for time series experiments
-    ts_exps = {"B1", "B2", "B3", "C"}
+    ts_exps = {"B1", "B2", "B3", "C", "D", "E"}
     if any(e in args.experiments for e in ts_exps):
         missing = [
             ds for ds in DATASETS for i in range(args.n_instances)
@@ -896,6 +1157,27 @@ def main():
         )
         df.to_csv("results_density_exp_c.csv", index=False)
         saved.append("results_density_exp_c.csv")
+
+    if "D" in args.experiments:
+        df = run_experiment_d(
+            data_dir=args.data_dir, device=device, msar_df=msar_df,
+            n_instances=args.n_instances,
+            seed=args.seed, wandb_run=wandb_run,
+            pool_dir=args.pool_d_dir,
+        )
+        df.to_csv("results_density_exp_d.csv", index=False)
+        saved.append("results_density_exp_d.csv")
+
+    if "E" in args.experiments:
+        df = run_experiment_e(
+            data_dir=args.data_dir, device=device, msar_df=msar_df,
+            n_instances=args.n_instances,
+            seed=args.seed, wandb_run=wandb_run,
+            pool_dir_full=args.pool_e_dir_full or args.pool_d_dir,
+            pool_dir_ar_only=args.pool_e_dir_ar_only,
+        )
+        df.to_csv("results_density_exp_e.csv", index=False)
+        saved.append("results_density_exp_e.csv")
 
     if wandb_run is not None:
         wandb_run.finish()

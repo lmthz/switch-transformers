@@ -1,13 +1,5 @@
 # generate_pool.py
-"""
-Pre-generate a pool of synthetic MSAR series and save to disk.
-Can be run on login node (no GPU needed) or inside sbatch before training.
 
-Usage:
-    python generate_pool.py                               # defaults
-    python generate_pool.py --n_series 200000             # smaller pool
-    python generate_pool.py --ar_coeff_scale 1.2 --out series_pool_wide.npz
-"""
 from __future__ import annotations
 
 import argparse
@@ -58,6 +50,15 @@ def generate_pool(
     ar_order_lo: int = 1,
     ar_order_hi: int = 10,
 ) -> None:
+    # Derive a unique seed from all parameters that affect series content.
+    # Fix for B3 pool bug: previously all pools used seed=42 regardless of
+    # ar_coeff_scale, so the numpy RNG produced identical series even though
+    # the config parameter was set correctly. XOR-combining parameters ensures
+    # each unique combination gets a genuinely different RNG stream.
+    effective_seed = (seed
+                      ^ int(ar_coeff_scale * 1000)
+                      ^ (ar_order_hi * 100000)
+                      ^ (hash(family_preset) & 0xFFFFFF))
     """
     Generate n_series synthetic series and save to a single .npz file.
 
@@ -95,7 +96,7 @@ def generate_pool(
         ar_order_hi=ar_order_hi,
         **weights,
     )
-    sampler = MSARBatchSampler(cfg, seed=seed)
+    sampler = MSARBatchSampler(cfg, seed=effective_seed)
 
     usable_len = series_len - burn_in
     pool = np.empty((n_series, usable_len), dtype=np.float32)
@@ -154,6 +155,7 @@ def generate_pool(
         series_len=np.array(series_len),
         burn_in=np.array(burn_in),
         seed=np.array(seed),
+        effective_seed=np.array(effective_seed),
         ar_coeff_scale=np.array(ar_coeff_scale),
         family_preset=np.array(family_preset),
         ar_order_lo=np.array(ar_order_lo),

@@ -3,19 +3,19 @@
 #SBATCH -p mit_normal_gpu
 #SBATCH --gres=gpu:0
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --mem=32G
 #SBATCH -t 06:00:00
 #SBATCH -o logs/%x_%j.out
 #SBATCH -e logs/%x_%j.err
 
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
-mkdir -p logs
+mkdir -p logs pools_de
 
 source /home/lizthorn/miniforge3/etc/profile.d/conda.sh
 conda activate switchgpu
 
-echo "=== Generating all series pools (CPU only) ==="
+echo "=== Generating all density experiment pools (CPU only) ==="
 echo ""
 
 if [ -f "series_pool.npz" ]; then
@@ -81,6 +81,12 @@ else
         --out pool_b2_order6.npz
 fi
 
+# ── B3 pools — coefficient scale variation ─────────────────────────
+# Note: if old B3 pools exist with wrong data (identical series bug),
+# delete them manually first, then resubmit:
+#   rm pool_b3_0.1.npz pool_b3_0.2.npz pool_b3_0.3.npz pool_b3_0.4.npz
+#   rm pool_b3_0.5.npz pool_b3_0.8.npz pool_b3_1.0.npz pool_b3_1.2.npz
+
 for SCALE in 0.1 0.2 0.3 0.4 0.5 0.8 1.0 1.2; do
     FNAME="pool_b3_${SCALE}.npz"
     if [ -f "$FNAME" ]; then
@@ -89,6 +95,40 @@ for SCALE in 0.1 0.2 0.3 0.4 0.5 0.8 1.0 1.2; do
         echo "=== B3: ar_coeff_scale=${SCALE} ==="
         python generate_pool.py --n_series 500000 --ar_coeff_scale "$SCALE" \
             --family_preset full --ar_order_lo 1 --ar_order_hi 10 \
+            --out "$FNAME"
+    fi
+done
+
+# ── D/E pools — task diversity sweep ──────────────────────────────
+M_VALUES="128 256 512 1024 2048 4096 8192 16384 32768 65536 131072 262144 500000"
+
+echo ""
+echo "=== D/E pools (full preset) ==="
+for M in $M_VALUES; do
+    FNAME="pools_de/pool_d_full_${M}.npz"
+    if [ -f "$FNAME" ]; then
+        echo "$FNAME already exists, skipping"
+    elif [ "$M" -eq 500000 ] && [ -f "series_pool.npz" ]; then
+        echo "M=500000 full: symlinking series_pool.npz"
+        ln -sf "$(pwd)/series_pool.npz" "$FNAME"
+    else
+        echo "=== D/E full: M=${M} ==="
+        python generate_pool.py --n_series "$M" --ar_coeff_scale 0.6 \
+            --family_preset full --ar_order_lo 1 --ar_order_hi 10 \
+            --out "$FNAME"
+    fi
+done
+
+echo ""
+echo "=== D/E pools (ar_only preset) ==="
+for M in $M_VALUES; do
+    FNAME="pools_de/pool_e_ar_only_${M}.npz"
+    if [ -f "$FNAME" ]; then
+        echo "$FNAME already exists, skipping"
+    else
+        echo "=== E ar_only: M=${M} ==="
+        python generate_pool.py --n_series "$M" --ar_coeff_scale 0.6 \
+            --family_preset ar_only --ar_order_lo 1 --ar_order_hi 10 \
             --out "$FNAME"
     fi
 done
