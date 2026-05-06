@@ -301,7 +301,7 @@ class MSSwitchGenerator:
             x_part = 0.0
             if X is not None and r.beta is not None:
                 x_curr = X[t] if X.ndim == 1 else X[t, :]
-                x_part = float(np.dot(r.beta, x_curr))
+                x_part = float(np.dot(r.beta.ravel(), np.atleast_1d(x_curr)).sum())
             y[t] = ar_part + ma_part + sar_part + sma_part + x_part + eps[t]
 
         # integration if D>0 or d>0
