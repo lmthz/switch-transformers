@@ -46,6 +46,7 @@ def run_msar_fixed_order(
     val_frac: float,
     maxiter: int,
     em_iter: int,
+    n_restarts: int = 5,
 ) -> Dict[str, Any]:
     """Run MSAR with a pre-selected order — no order search."""
     if dataset_name not in CONFIGS:
@@ -59,6 +60,7 @@ def run_msar_fixed_order(
         val_frac=val_frac,
         maxiter=maxiter,
         em_iter=em_iter,
+        n_restarts=n_restarts,
     )
     out["selected_order"] = int(order)
     return out
@@ -71,6 +73,8 @@ def main():
                     help="Number of instances per dataset (default 30). "
                          "Order selected on r0, reused for r1..r(n-1).")
     ap.add_argument("--val_frac",    type=float, default=0.3)
+    ap.add_argument("--n_restarts",  type=int,   default=5,
+                    help="Random restarts per fit to handle convergence failures (default 5).")
     ap.add_argument("--out",         type=str,   default="msar_results.csv")
     args = ap.parse_args()
 
@@ -78,6 +82,10 @@ def main():
     candidate_orders = [2, 3, 4, 5, 6, 8, 10]
     maxiter          = 150
     em_iter          = 10
+
+    # Datasets known to have convergence problems get more restarts
+    HARD_DATASETS = {"F1_seasonal_sarimax", "F2_seasonal_exog",
+                     "D1_arima211", "D2_arima221", "D3_arima210", "H1_ar10_coeffs"}
 
     # Check r0 files exist
     missing = [ds for ds in DATASETS
@@ -103,6 +111,7 @@ def main():
         r0_result = None
         selected_order = None
         try:
+            n_restarts = args.n_restarts * 2 if ds in HARD_DATASETS else args.n_restarts
             r0_result = run_msar(
                 ds,
                 data_dir=data_dir,
@@ -111,6 +120,7 @@ def main():
                 maxiter=maxiter,
                 em_iter=em_iter,
                 file_name=ds_r0,
+                n_restarts=n_restarts,
             )
             selected_order = r0_result.get("selected_order", r0_result["order"])
             print(f"  r0: val={r0_result['val_rmse']:.4f}  "
@@ -141,21 +151,30 @@ def main():
                     val_frac=args.val_frac,
                     maxiter=maxiter,
                     em_iter=em_iter,
+                    n_restarts=n_restarts,
                 )
                 all_val_rmse.append(ri_result["val_rmse"])
                 all_train_rmse.append(ri_result["train_rmse"])
             except Exception as e:
                 print(f"  r{ri}: [FAILED] {e}")
 
-        n_ok = len(all_val_rmse)
-        val_mean = float(np.mean(all_val_rmse)) if all_val_rmse else float("nan")
-        val_std  = float(np.std(all_val_rmse))  if all_val_rmse else float("nan")
-        print(f"  mean val_rmse={val_mean:.4f} ± {val_std:.4f}  ({n_ok}/{args.n_instances} instances)")
+        # Filter out NaN values — some instances may return NaN val_rmse
+        # when the val split has no finite predictions (common for ARIMA/seasonal)
+        val_finite   = [v for v in all_val_rmse   if np.isfinite(v)]
+        train_finite = [v for v in all_train_rmse if np.isfinite(v)]
+        n_ok     = len(val_finite)
+        n_ran    = len(all_val_rmse)
+        val_mean = float(np.mean(val_finite))   if val_finite   else float("nan")
+        val_std  = float(np.std(val_finite))    if val_finite   else float("nan")
+        tr_mean  = float(np.mean(train_finite)) if train_finite else float("nan")
+        if n_ran > 0 and n_ok < n_ran:
+            print(f"  note: {n_ran - n_ok}/{n_ran} instances returned NaN val_rmse (filtered out)")
+        print(f"  mean val_rmse={val_mean:.4f} ± {val_std:.4f}  ({n_ok}/{args.n_instances} valid instances)")
 
         rows.append({
             "dataset":           ds,
             "msar_order":        selected_order if selected_order else float("nan"),
-            "msar_train_rmse":   float(np.mean(all_train_rmse)) if all_train_rmse else float("nan"),
+            "msar_train_rmse":   tr_mean,
             "msar_val_rmse":     val_mean,
             "msar_val_rmse_std": val_std,
             "msar_n_instances":  n_ok,

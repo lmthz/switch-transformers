@@ -218,7 +218,14 @@ def build_exog_for_dataset(dataset_name: str, n_total: int) -> Optional[np.ndarr
 # ================================================================
 # MODEL FITTING
 # ================================================================
-def fit_markov_ar(y_train, cfg, exog_train, maxiter, em_iter):
+def fit_markov_ar(y_train, cfg, exog_train, maxiter, em_iter,
+                  random_state: int = 42):
+    """
+    Fit a Markov-switching AR model.
+    random_state seeds numpy before fitting to control EM initialisation.
+    Different seeds give different starting points — useful for retries.
+    """
+    np.random.seed(random_state)
     model = MarkovAutoregression(
         endog=y_train,
         k_regimes=cfg.k_regimes,
@@ -369,7 +376,15 @@ def evaluate_msar_fixed_order(
     val_frac: float,
     maxiter: int,
     em_iter: int,
+    n_restarts: int = 5,
+    base_seed: int = 42,
 ) -> Dict[str, Any]:
+    """
+    Fit and evaluate MSAR with random-restart logic.
+    If the fit produces NaN val_rmse (EM converged to a degenerate solution),
+    retry with a different random seed up to n_restarts times.
+    Returns the result with the lowest finite val_rmse.
+    """
     y_raw, true_states, T, sigma, ar, ma, eps, z, d = load_npz_series(data_dir, dataset_name)
     n = len(y_raw)
     n_train, n_val = train_val_split_indices(n, val_frac)
@@ -382,8 +397,41 @@ def evaluate_msar_fixed_order(
     exog_full = build_exog_for_dataset(dataset_name, n_total=n)
     exog_train = exog_full[:n_train] if (cfg.use_exog and exog_full is not None) else None
 
-    # fit on train only
-    res_train = fit_markov_ar(y[:n_train], cfg, exog_train, maxiter, em_iter)
+    # Fit with random restarts — retry on degenerate convergence (NaN predictions)
+    best_result = None
+    best_val_rmse = float("inf")
+
+    for restart in range(max(1, n_restarts)):
+        seed = base_seed + restart * 1000
+        try:
+            res_candidate = fit_markov_ar(
+                y[:n_train], cfg, exog_train, maxiter, em_iter,
+                random_state=seed,
+            )
+            # Quick check: evaluate this fit
+            pred_candidate, _ = predict_full_series_with_fixed_params(
+                y, cfg, exog_full, res_candidate.params)
+            ok = np.isfinite(pred_candidate)
+            val_ok = ok[n_train:]
+            if val_ok.sum() == 0:
+                continue  # no valid val predictions — try next seed
+            err = y[n_train:][val_ok] - pred_candidate[n_train:][val_ok]
+            _, rmse = mse_rmse(err)
+            if np.isfinite(rmse) and rmse < best_val_rmse:
+                best_val_rmse = rmse
+                best_result = res_candidate
+                if restart > 0:
+                    print(f"  [msar] restart {restart} improved val_rmse to {rmse:.4f} "
+                          f"for {dataset_name}")
+        except Exception:
+            continue
+
+    if best_result is None:
+        # All restarts failed — fall back to last attempt without restart logic
+        best_result = fit_markov_ar(
+            y[:n_train], cfg, exog_train, maxiter, em_iter, random_state=base_seed)
+
+    res_train = best_result
 
     # fixed-param filtering for full-series one-step predictions
     pred_full, decoded_full = predict_full_series_with_fixed_params(y, cfg, exog_full, res_train.params)
@@ -466,6 +514,7 @@ def run_msar(
     maxiter: int = 150,
     em_iter: int = 10,
     file_name: Optional[str] = None,
+    n_restarts: int = 5,
 ) -> Dict[str, Any]:
     """
     Args:
@@ -501,6 +550,7 @@ def run_msar(
                 val_frac=val_frac,
                 maxiter=maxiter,
                 em_iter=em_iter,
+                n_restarts=n_restarts,
             )
         except Exception as e:
             print(f"[msar] order={o} failed for {dataset_name}: {type(e).__name__}: {e}")
