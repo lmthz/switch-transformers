@@ -47,8 +47,8 @@ tail -f logs/sw_data_<jobid>.out
 # Step 2 — run MSAR baseline on compute node
 # Fits statsmodels MarkovAutoregression to each dataset, saves msar_results.csv
 # Always deletes old msar_results.csv first and regenerates fresh
-sbatch scripts/run_msar.sbatch  # resume from existing CSV if present
-python run_msar_all.py --fresh  # ignore existing results, rerun all
+sbatch scripts/run_msar.sbatch          # resume from existing CSV if present
+sbatch scripts/run_msar.sbatch --fresh  # ignore existing results, rerun all
 
 # Track progress:
 squeue -u <kerb>

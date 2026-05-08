@@ -15,11 +15,6 @@ mkdir -p logs
 source /home/lizthorn/miniforge3/etc/profile.d/conda.sh
 conda activate switchgpu
 
-if [ -f "msar_results.csv" ]; then
-    echo "=== Deleting old msar_results.csv ==="
-    rm msar_results.csv
-fi
-
 echo "=== Running MSAR on all 21 datasets x 30 instances ==="
 echo "=== Order selection on r0 only, reused for r1-r29 ==="
 echo "=== 5 random restarts per fit (10 for hard datasets) ==="
@@ -27,5 +22,6 @@ python run_msar_all.py \
     --n_instances 30 \
     --val_frac 0.3 \
     --n_restarts 5 \
-    --out msar_results.csv
+    --out msar_results.csv \
+    "$@"
 echo "=== Done. Run next: sbatch scripts/run_compare.sbatch ==="
