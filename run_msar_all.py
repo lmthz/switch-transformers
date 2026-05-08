@@ -84,8 +84,11 @@ def main():
     em_iter          = 10
 
     # Datasets known to have convergence problems get more restarts
-    HARD_DATASETS = {"F1_seasonal_sarimax", "F2_seasonal_exog",
-                     "D1_arima211", "D2_arima221", "D3_arima210", "H1_ar10_coeffs"}
+    # Extra restarts for datasets with frequent convergence failures
+    HARD_DATASETS  = {"F1_seasonal_sarimax", "F2_seasonal_exog",
+                      "D1_arima211", "D2_arima221", "D3_arima210"}
+    # H1 AR(10) is slow to fit — use fewer restarts to stay within wall time
+    FAST_DATASETS  = {"H1_ar10_coeffs"}
 
     # Check r0 files exist
     missing = [ds for ds in DATASETS
@@ -111,7 +114,12 @@ def main():
         r0_result = None
         selected_order = None
         try:
-            n_restarts = args.n_restarts * 2 if ds in HARD_DATASETS else args.n_restarts
+            if ds in HARD_DATASETS:
+                n_restarts = args.n_restarts * 2   # 10 restarts
+            elif ds in FAST_DATASETS:
+                n_restarts = 3                      # 3 restarts — slow to fit
+            else:
+                n_restarts = args.n_restarts        # 5 restarts (default)
             r0_result = run_msar(
                 ds,
                 data_dir=data_dir,
