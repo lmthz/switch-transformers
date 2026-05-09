@@ -658,8 +658,12 @@ def run_experiment_b3(
 
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
         pool_for_scale = (b3_pools or {}).get(str(scale), None)
+        # XOR seed with scale so each condition gets a genuinely different RNG stream.
+        # Without this, on-the-fly generation produces series that are rescaled
+        # versions of each other and look identical after standardisation.
+        scale_seed = seed ^ int(scale * 1000)
         sampler = build_sampler(
-            ar_coeff_scale=scale, seed=seed,
+            ar_coeff_scale=scale, seed=scale_seed,
             ar_order_lo=1, ar_order_hi=2,  # hold order fixed at AR(2)
             pool_path=pool_for_scale,
             family_weights=FAMILY_PRESETS["full"],

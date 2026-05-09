@@ -35,7 +35,8 @@ mkdir -p logs
 # ================================================================
 
 # Step 1 — generate evaluation datasets on compute node
-# Generates 63 .npz files: 21 dataset types x 3 random instances each
+# Generates 630 .npz files: 21 dataset types x 30 instances each
+# Each instance has independently sampled parameters (not just different noise seeds)
 sbatch scripts/generate_data.sbatch
 
 # Track progress:
@@ -46,7 +47,7 @@ tail -f logs/sw_data_<jobid>.out
 
 # Step 2 — run MSAR baseline on compute node
 # Fits statsmodels MarkovAutoregression to each dataset, saves msar_results.csv
-# Always deletes old msar_results.csv first and regenerates fresh
+# Resumes from existing CSV by default — safe to resubmit if job hits wall time
 sbatch scripts/run_msar.sbatch          # resume from existing CSV if present
 sbatch scripts/run_msar.sbatch --fresh  # ignore existing results, rerun all
 
@@ -106,16 +107,21 @@ wandb sync wandb/offline-run-<id>
 # DATA DENSITY EXPERIMENTS
 # ================================================================
 
-# Tests two axes of training data density:
+# Two axes: model class coverage (B1/B2/B3) and task diversity (A/C/D/E)
+#
 #   A:  Linear regression (Raventós replication, sanity check)
 #   B1: Process family coverage (AR only → full mixture)
-#   B2: AR order coverage (AR(2) only → AR(10))
-#   B3: Coefficient magnitude sweep
-#   C:  Training steps sweep
+#   B2: AR order coverage (p_max = 2/4/6/10)
+#   B3: Coefficient magnitude sweep (ar_coeff_scale 0.1–1.2)
+#   C:  Training steps sweep (50–100k steps, fixed pool)
+#   D:  Pool size sweep (M = 128–500k, each series seen once)
+#   E:  Pool size x family preset (ar_only vs full, same M range as D)
 #
 # Prerequisites: msar_results.csv and generated_data/ must exist.
 #
-# Optional but recommended: pre-generate B1 pools first on a CPU node.
+# B1/B2/B3 use on-the-fly generation — no pool needed.
+# C uses the main pre-generated pool (series_pool.npz).
+# D/E use per-M pools; pre-generate them first:
 sbatch scripts/generate_density_pools.sbatch
 squeue -u <kerb>   # wait until done
 
@@ -170,6 +176,8 @@ scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/msar_results.csv' ~/Downloa
 #   exp_b2/<order>/...              per-order-config results
 #   exp_b3/scale_<x>/...            per-coefficient-scale results
 #   exp_c/steps_<n>/...             per-step-count results
+#   exp_d/M, exp_d/mean_*           pool size sweep results
+#   exp_e/<preset>/M, exp_e/...     pool size x family preset results
 
 
 # ================================================================
@@ -182,10 +190,12 @@ ls -t logs/                                   # list all logs, newest first
 cat logs/<logfile>.out                        # see full stdout log
 cat logs/<logfile>.err                        # see full stderr log (tqdm output)
 ls results_*.csv                              # list result files
-ls generated_data/*_r0.npz | wc -l           # count evaluation datasets
+ls generated_data/*_r0.npz | wc -l           # count evaluation datasets (expect 21)
 ls -la msar_results.csv                       # check MSAR results exist
-ls -la series_pool.npz                        # check pool exists
+ls -la series_pool.npz                        # check main pool exists (used by C)
 ls pool_b1_*.npz                              # check B1 pools exist
+ls pool_d_full_*.npz   | wc -l               # check D pools exist (expect 13)
+ls pool_e_ar_only_*.npz | wc -l              # check E ar_only pools exist (expect 13)
 cat ~/.netrc | grep wandb                     # check W&B credentials saved
 ls wandb/                                     # list offline W&B run directories
 wandb sync wandb/offline-run-<id>             # sync specific run to website

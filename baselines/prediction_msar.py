@@ -48,7 +48,7 @@ CONFIGS: Dict[str, MSARConfig] = {
     "D3_arima210": MSARConfig("D3_arima210", order=5),
 
     "E1_drift_only": MSARConfig(
-        "E1_drift_only", order=2,
+        "E1_drift_only", order=1,
         switching_ar=False, switching_variance=False,
         switching_exog=True, use_exog=True
     ),
@@ -66,7 +66,7 @@ CONFIGS: Dict[str, MSARConfig] = {
     ),
 
     "G1_exogenous_only": MSARConfig(
-        "G1_exogenous_only", order=2,
+        "G1_exogenous_only", order=1,
         switching_ar=False, switching_variance=False,
         switching_exog=True, use_exog=True
     ),

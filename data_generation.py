@@ -430,14 +430,16 @@ class MSSwitchGenerator:
                             save_name=f"D3_arima210{suffix}", plot=True)
 
         # ---------------- E1: DriftOnly ----------------
-        regE1 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.30,
+        # Pure drift: no AR dynamics; regimes differ only in exogenous ramp coefficient.
+        # Regime 0 is flat (beta=0), regime 1 drifts upward (beta=0.5 on normalised time).
+        regE1 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.30,
                            beta=np.array([0.00]), name="flat")
-        regE2 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.30,
-                           beta=np.array([0.02]), name="uptrend")
-        X_const = np.ones(n + burn)
+        regE2 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.30,
+                           beta=np.array([0.50]), name="uptrend")
+        X_ramp = np.arange(n + burn).astype(float) / (n + burn - 1)
         self.simulate_sarimax([regE1, regE2], T_base, n=n,
-                              p=2, d=0, q=0, P=0, D=0, Q=0, s=1,
-                              X=X_const, burn_in=burn,
+                              p=0, d=0, q=0, P=0, D=0, Q=0, s=1,
+                              X=X_ramp, burn_in=burn,
                               save_name=f"E1_drift_only{suffix}", plot=True)
 
         # ---------------- E2: LevelShiftOnly ----------------
@@ -445,6 +447,7 @@ class MSSwitchGenerator:
                            beta=np.array([+0.02]), name="pos")
         regE4 = RegimeARMA(ar=np.array([0.7, -0.25]), ma=None, sigma=0.30,
                            beta=np.array([-0.02]), name="neg")
+        X_const = np.ones(n + burn)
         self.simulate_sarimax([regE3, regE4], T_base, n=n,
                               p=2, d=0, q=0, P=0, D=0, Q=0, s=1,
                               X=X_const, burn_in=burn,
@@ -479,13 +482,15 @@ class MSSwitchGenerator:
                               save_name=f"F2_seasonal_exog{suffix}", plot=True)
 
         # ---------------- G1: ExogenousOnly ----------------
+        # Pure exogenous: no AR dynamics; regimes differ only in sinusoidal loading.
+        # Regime 0 ignores the covariate (beta=0), regime 1 tracks it (beta=0.8).
         X_sin = np.sin(2 * np.pi * t_full / s)
-        regG1 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.25,
+        regG1 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.25,
                            beta=np.array([0.0]), name="no-exog")
-        regG2 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.25,
+        regG2 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.25,
                            beta=np.array([0.8]), name="exog-on")
         self.simulate_sarimax([regG1, regG2], T_base, n=n,
-                              p=2, d=0, q=0, P=0, D=0, Q=0, s=1,
+                              p=0, d=0, q=0, P=0, D=0, Q=0, s=1,
                               X=X_sin, burn_in=burn,
                               save_name=f"G1_exogenous_only{suffix}", plot=True)
 
@@ -521,8 +526,9 @@ class MSSwitchGenerator:
 
         # ---------------- SW1: Single-switch ----------------
         total = n + burn
+        switch_point = int(self.rng.integers(total // 4, 3 * total // 4))
         states_single = np.zeros(total, dtype=int)
-        states_single[total // 2:] = 1
+        states_single[switch_point:] = 1
         self.simulate_ar(
             [regA1, regA2], T_base, n=n, burn_in=burn,
             save_name=f"SW1_A1_single_switch{suffix}", plot=True,
