@@ -61,6 +61,24 @@ class MSSwitchGenerator:
         print(f"[markov] done (K={K})")
         return states
 
+    def _sample_transition_matrix(self) -> Array:
+        """
+        Sample a random transition matrix for non-structural datasets.
+
+        p_{00} ~ Beta(19.4, 0.6)  →  mean=0.97, sojourn lengths ~15-80
+        p_{11} ~ Beta(11.5, 1.0)  →  mean=0.92, sojourn lengths ~5-50
+
+        Beta parameters chosen so means match the fixed T_base while adding
+        genuine instance-level diversity in switching dynamics.
+        """
+        p00 = float(self.rng.beta(19.4, 0.6))
+        p11 = float(self.rng.beta(11.5, 1.0))
+        T = np.array([[p00, 1 - p00],
+                      [1 - p11, p11]])
+        print(f"[transition] sampled p00={p00:.4f} p11={p11:.4f} "
+              f"(avg sojourns: {1/(1-p00):.1f}, {1/(1-p11):.1f})")
+        return T
+
     @staticmethod
     def _seasonal_diff(x: Array, s: int, D: int) -> Array:
         y = np.asarray(x, dtype=float)
@@ -72,7 +90,6 @@ class MSSwitchGenerator:
     def _seasonal_integrate(z: Array, s: int, D: int, n_out: int) -> Array:
         """Invert seasonal differencing by repeated seasonal cumulative sums."""
         y = np.zeros(n_out, dtype=float)
-        # Simple reconstruction: place z and accumulate seasonally
         y[:len(z)] = z
         for _ in range(D):
             for t in range(s, n_out):
@@ -83,7 +100,6 @@ class MSSwitchGenerator:
     def _plot_series(self, y: Array, states: Array, title: str, png_name: str):
         plt.figure(figsize=(11, 4))
         plt.plot(y, label="series")
-        # scale and overlay states
         scale = (np.max(np.abs(y)) or 1.0) * 0.5
         plt.scatter(range(len(states)), states * scale, c=states, s=6, label="state")
         plt.title(title)
@@ -133,7 +149,6 @@ class MSSwitchGenerator:
         y = y[burn_in:]
         states = states[burn_in:]
 
-        # save metadata for baseline/analysis
         ar_mat = np.stack([r.ar for r in regimes])
         sigma_vec = np.array([r.sigma for r in regimes])
 
@@ -183,19 +198,11 @@ class MSSwitchGenerator:
 
         ar_mat = np.stack([r.ar for r in regimes])
         sigma_vec = np.array([r.sigma for r in regimes])
-        if q > 0:
-            ma_mat = np.stack([r.ma for r in regimes])
-        else:
-            ma_mat = None
+        ma_mat = np.stack([r.ma for r in regimes]) if q > 0 else None
 
         if save_name is not None:
-            save_kwargs: Dict[str, Any] = dict(
-                y=y,
-                states=states,
-                T=T,
-                ar=ar_mat,
-                sigma=sigma_vec,
-            )
+            save_kwargs: Dict[str, Any] = dict(y=y, states=states, T=T,
+                                               ar=ar_mat, sigma=sigma_vec)
             if ma_mat is not None:
                 save_kwargs["ma"] = ma_mat
                 save_kwargs["eps"] = eps_eff
@@ -210,7 +217,7 @@ class MSSwitchGenerator:
         return {"y": y, "states": states, "T": T}
 
     def simulate_arima(self, regimes: List[RegimeARMA], T: Array,
-                    n: int, d: int, burn_in: int, save_name: str, plot: bool = True):
+                       n: int, d: int, burn_in: int, save_name: str, plot: bool = True):
         """Simulate ARIMA(p,d,q) by differencing/integrating ARMA innovations."""
         p, q = self._check_ar_ma_orders(regimes)
         states = self._sample_markov_chain(T, n + burn_in)
@@ -224,12 +231,10 @@ class MSSwitchGenerator:
             ma_part = np.dot(r.ma, eps[t - np.arange(1, q + 1)]) if q else 0.0
             z[t] = ar_part + ma_part + eps[t]
 
-        # integrate to get y
         y = np.cumsum(z, axis=0)
         for _ in range(d - 1):
             y = np.cumsum(y, axis=0)
 
-        # drop burn-in
         y = y[burn_in:]
         z_out = z[burn_in:]
         eps_out = eps[burn_in:]
@@ -237,29 +242,14 @@ class MSSwitchGenerator:
 
         ar_mat = np.stack([r.ar for r in regimes])
         sigma_vec = np.array([r.sigma for r in regimes])
-
-        # optional: stack ma if present (q>0)
-        if q > 0:
-            ma_mat = np.stack([r.ma for r in regimes])
-        else:
-            ma_mat = None
+        ma_mat = np.stack([r.ma for r in regimes]) if q > 0 else None
 
         if save_name is not None:
-            save_kwargs = dict(
-                y=y,
-                z=z_out,
-                eps=eps_out,
-                states=states,
-                T=T,
-                ar=ar_mat,
-                sigma=sigma_vec,
-                d=d,
-            )
+            save_kwargs = dict(y=y, z=z_out, eps=eps_out, states=states,
+                               T=T, ar=ar_mat, sigma=sigma_vec, d=d)
             if ma_mat is not None:
                 save_kwargs["ma"] = ma_mat
-
             np.savez(self.save_dir / f"{save_name}.npz", **save_kwargs)
-
             if plot:
                 self._plot_series(y, states, save_name, f"{save_name}_plot.png")
             print(f"[save] {save_name}.npz done")
@@ -274,12 +264,8 @@ class MSSwitchGenerator:
         regimes: List[RegimeARMA],
         T: Array,
         n: int,
-        p: int,
-        d: int,
-        q: int,
-        P: int,
-        D: int,
-        Q: int,
+        p: int, d: int, q: int,
+        P: int, D: int, Q: int,
         s: int,
         X: Optional[Array],
         burn_in: int,
@@ -304,7 +290,6 @@ class MSSwitchGenerator:
                 x_part = float(np.dot(r.beta.ravel(), np.atleast_1d(x_curr)).sum())
             y[t] = ar_part + ma_part + sar_part + sma_part + x_part + eps[t]
 
-        # integration if D>0 or d>0
         if D > 0:
             y = self._seasonal_integrate(y, s, D, len(y))
         if d > 0:
@@ -319,11 +304,8 @@ class MSSwitchGenerator:
         if save_name is not None:
             np.savez(
                 self.save_dir / f"{save_name}.npz",
-                y=y,
-                states=states,
-                T=T,
-                ar=ar_mat,
-                sigma=sigma_vec,
+                y=y, states=states, T=T,
+                ar=ar_mat, sigma=sigma_vec,
                 orders=(p, d, q, P, D, Q, s),
             )
             if plot:
@@ -336,10 +318,22 @@ class MSSwitchGenerator:
         return {"y": y, "states": states, "T": T, "orders": (p, d, q, P, D, Q, s)}
 
     # ---------------- dataset menu (extended) ----------------
-    def make_datasets_menu(self, n: int = 1000, burn: int = 600, suffix: str = "_r0"):
+    def make_datasets_menu(self, n: int = 1000, burn: int = 600, suffix: str = "_r0",
+                           randomise_transitions: bool = True):
         """
-        Generate an extended suite of Markov-switching datasets. All artifacts are saved
-        under self.save_dir with consistent names and plots.
+        Generate an extended suite of Markov-switching datasets.
+
+        randomise_transitions (default True):
+            For non-structural datasets (A–H), sample p_{00} and p_{11} from
+            Beta distributions each call, so each instance has genuinely
+            different switching dynamics as well as different noise realisations.
+
+            Beta parameters are chosen so means match the original T_base:
+              p_{00} ~ Beta(19.4, 0.6)  →  mean=0.97
+              p_{11} ~ Beta(11.5, 1.0)  →  mean=0.92
+
+            Structural datasets (S1, S2, NS0, NS1, SW1) always use their
+            fixed matrices — randomising T would undermine their purpose.
 
         Scenarios:
           A1  AR(2) CoeffsOnly (easy)
@@ -353,29 +347,37 @@ class MSSwitchGenerator:
           D3  ARIMA(2,1,0) (integrated AR, no MA)
           E1  DriftOnly via exogenous constant (β switch)
           E2  LevelShiftOnly via exogenous constant (β changes sign)
-          F1  Seasonal SARIMAX (2,0,1)x(1,1,1)s=24 (seasonal AR/MA change)
+          F1  Seasonal SARIMAX (2,0,1)x(1,1,1)s=24
           F2  Seasonal+Exog (sin, cos) with regime-specific β
           G1  ExogenousOnly (no MA; AR identical; β on sin)
           H1  HighOrder AR(p=10) CoeffsOnly
           H2  Near-Unit-Root stress (AR(1) ~ 0.98 vs 0.90)
-          S1  SparseSwitching (long sojourns)
-          S2  FrequentSwitching (short sojourns)
-          NS0/NS1  No-switch cases (always regime 0 or 1)
-          SW1       Single-switch trajectory (half 0, half 1)
+          S1  SparseSwitching  [fixed T]
+          S2  FrequentSwitching  [fixed T]
+          NS0/NS1  No-switch cases  [fixed T]
+          SW1  Single-switch trajectory  [fixed T]
         """
 
         print("\n[menu] Generating extended dataset menu...\n")
 
-        # Base transitions
-        T_base = np.array([[0.97, 0.03],
-                           [0.08, 0.92]])   # avg runs ~33 and ~12.5
-        T_sparse   = np.array([[0.992, 0.008],
-                               [0.02,  0.98 ]])  # very long runs
-        T_frequent = np.array([[0.85, 0.15],
-                               [0.20, 0.80]])    # frequent switching
-        # No-switch transition
-        T_no_switch = np.array([[1.0, 0.0],
-                                [0.0, 1.0]])
+        # ── Transition matrices ───────────────────────────────────────────────
+        # For A–H datasets: sample per-instance if randomise_transitions=True,
+        # otherwise fall back to the fixed reference matrix.
+        T_base_fixed = np.array([[0.97, 0.03],
+                                 [0.08, 0.92]])   # avg runs ~33 and ~12.5
+
+        if randomise_transitions:
+            T_base = self._sample_transition_matrix()
+        else:
+            T_base = T_base_fixed
+
+        # Structural datasets always use fixed matrices
+        T_sparse    = np.array([[0.992, 0.008],
+                                [0.02,  0.98 ]])   # very long runs
+        T_frequent  = np.array([[0.85,  0.15 ],
+                                [0.20,  0.80 ]])   # frequent switching
+        T_no_switch = np.array([[1.0,   0.0  ],
+                                [0.0,   1.0  ]])
 
         # ---------------- A1: AR(2) CoeffsOnly (easy, well-separated) ----------------
         regA1 = RegimeARMA(ar=np.array([0.6, -0.2]), ma=None, sigma=0.30, name="calm")
@@ -389,7 +391,7 @@ class MSSwitchGenerator:
         self.simulate_ar([regA3, regA4], T_base, n=n, burn_in=burn,
                          save_name=f"A2_ar2_coeffs_hard{suffix}", plot=True)
 
-        # ---------------- A3: AR(2) Coeffs+Var (coefficients AND sigma change) ----------------
+        # ---------------- A3: AR(2) Coeffs+Var ----------------
         regA5 = RegimeARMA(ar=np.array([0.65, -0.15]), ma=None, sigma=0.20, name="coeffs_var_low")
         regA6 = RegimeARMA(ar=np.array([1.05, -0.55]), ma=None, sigma=0.60, name="coeffs_var_high")
         self.simulate_ar([regA5, regA6], T_base, n=n, burn_in=burn,
@@ -417,17 +419,17 @@ class MSSwitchGenerator:
         self.simulate_arima([regC1, regC2], T_base, n=n, d=1, burn_in=burn,
                             save_name=f"D1_arima211{suffix}", plot=True)
 
-        # ---------------- D2: ARIMA(2,2,1) (more integration) ----------------
+        # ---------------- D2: ARIMA(2,2,1) ----------------
         self.simulate_arima([regC1, regC2], T_base, n=n, d=2, burn_in=burn,
                             save_name=f"D2_arima221{suffix}", plot=True)
 
-        # ---------------- D3: ARIMA(2,1,0) (integrated AR, no MA) ----------------
+        # ---------------- D3: ARIMA(2,1,0) ----------------
         regD3_1 = RegimeARMA(ar=np.array([0.6, -0.2]), ma=None, sigma=0.30, name="ar_int_r1")
         regD3_2 = RegimeARMA(ar=np.array([1.0, -0.5]), ma=None, sigma=0.30, name="ar_int_r2")
         self.simulate_arima([regD3_1, regD3_2], T_base, n=n, d=1, burn_in=burn,
                             save_name=f"D3_arima210{suffix}", plot=True)
 
-        # ---------------- E1: DriftOnly via X=1 (β switch, piecewise linear) ----------------
+        # ---------------- E1: DriftOnly ----------------
         regE1 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.30,
                            beta=np.array([0.00]), name="flat")
         regE2 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.30,
@@ -438,7 +440,7 @@ class MSSwitchGenerator:
                               X=X_const, burn_in=burn,
                               save_name=f"E1_drift_only{suffix}", plot=True)
 
-        # ---------------- E2: LevelShiftOnly via X=1 (β changes sign) ----------------
+        # ---------------- E2: LevelShiftOnly ----------------
         regE3 = RegimeARMA(ar=np.array([0.7, -0.25]), ma=None, sigma=0.30,
                            beta=np.array([+0.02]), name="pos")
         regE4 = RegimeARMA(ar=np.array([0.7, -0.25]), ma=None, sigma=0.30,
@@ -448,7 +450,7 @@ class MSSwitchGenerator:
                               X=X_const, burn_in=burn,
                               save_name=f"E2_level_shift{suffix}", plot=True)
 
-        # ---------------- F1: Seasonal SARIMAX (2,0,1)x(1,1,1)_{24} ----------------
+        # ---------------- F1: Seasonal SARIMAX ----------------
         s = 24
         regF1 = RegimeARMA(ar=np.array([0.6, -0.2]), ma=np.array([0.3]), sigma=0.25,
                            sar=np.array([0.3]), sma=np.array([0.2]), name="seasonal_soft")
@@ -459,13 +461,12 @@ class MSSwitchGenerator:
                               X=None, burn_in=burn,
                               save_name=f"F1_seasonal_sarimax{suffix}", plot=True)
 
-        # ---------------- F2: Seasonal+Exog (sin, cos) with regime β ----------------
+        # ---------------- F2: Seasonal+Exog ----------------
         t_full = np.arange(n + burn)
         X_trig = np.stack(
             [np.sin(2 * np.pi * t_full / s), np.cos(2 * np.pi * t_full / s)],
             axis=1
-        )  # (n+burn, 2)
-        # Same AR/MA across regimes; only beta differs. Shrink beta + sigma to avoid explosions.
+        )
         regF3 = RegimeARMA(ar=np.array([0.7, -0.25]), ma=np.array([0.2]), sigma=0.20,
                            sar=np.array([0.2]), sma=np.array([0.2]),
                            beta=np.array([0.5, 0.0]), name="sin-dominant")
@@ -477,8 +478,8 @@ class MSSwitchGenerator:
                               X=X_trig, burn_in=burn,
                               save_name=f"F2_seasonal_exog{suffix}", plot=True)
 
-        # ---------------- G1: ExogenousOnly (AR same; β on sin only) ----------------
-        X_sin = np.sin(2 * np.pi * t_full / s)  # (n+burn,)
+        # ---------------- G1: ExogenousOnly ----------------
+        X_sin = np.sin(2 * np.pi * t_full / s)
         regG1 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.25,
                            beta=np.array([0.0]), name="no-exog")
         regG2 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.25,
@@ -488,7 +489,7 @@ class MSSwitchGenerator:
                               X=X_sin, burn_in=burn,
                               save_name=f"G1_exogenous_only{suffix}", plot=True)
 
-        # ---------------- H1: HighOrder AR(p=10) CoeffsOnly ----------------
+        # ---------------- H1: HighOrder AR(p=10) ----------------
         ar10_r1 = np.array([0.45, -0.3, 0.2, -0.12, 0.08, -0.06, 0.05, -0.04, 0.03, -0.02])
         ar10_r2 = np.array([0.60, -0.40, 0.22, -0.14, 0.10, -0.08, 0.06, -0.05, 0.04, -0.03])
         regH1 = RegimeARMA(ar=ar10_r1, ma=None, sigma=0.30, name="p10_r1")
@@ -496,68 +497,66 @@ class MSSwitchGenerator:
         self.simulate_ar([regH1, regH2], T_base, n=n, burn_in=burn,
                          save_name=f"H1_ar10_coeffs{suffix}", plot=True)
 
-        # ---------------- H2: Near-Unit-Root stress (AR(1)) ----------------
+        # ---------------- H2: Near-Unit-Root ----------------
         regH3 = RegimeARMA(ar=np.array([0.98]), ma=None, sigma=0.20, name="unitish")
         regH4 = RegimeARMA(ar=np.array([0.90]), ma=None, sigma=0.20, name="less-persistent")
         self.simulate_ar([regH3, regH4], T_base, n=n, burn_in=burn,
                          save_name=f"H2_ar1_near_unit_root{suffix}", plot=True)
 
-        # ---------------- S1: SparseSwitching on AR(2) CoeffsOnly ----------------
+        # ── Structural datasets — always fixed transition matrices ────────────
+
+        # ---------------- S1: SparseSwitching ----------------
         self.simulate_ar([regA1, regA2], T_sparse, n=n, burn_in=burn,
                          save_name=f"S1_sparse_switching{suffix}", plot=True)
 
-        # ---------------- S2: FrequentSwitching on AR(2) CoeffsOnly ----------------
+        # ---------------- S2: FrequentSwitching ----------------
         self.simulate_ar([regA1, regA2], T_frequent, n=n, burn_in=burn,
                          save_name=f"S2_frequent_switching{suffix}", plot=True)
 
-        # ---------------- NS0/NS1: No-switch cases (always regime 0 or 1) ----------------
-        # Always in regime 0 (using A1 params)
+        # ---------------- NS0/NS1: No-switch ----------------
         self.simulate_ar([regA1, regA2], T_no_switch, n=n, burn_in=burn,
                          save_name=f"NS0_A1_no_switch_regime0{suffix}", plot=True, init_state=0)
-        # Always in regime 1 (using A1 params)
         self.simulate_ar([regA1, regA2], T_no_switch, n=n, burn_in=burn,
                          save_name=f"NS1_A1_no_switch_regime1{suffix}", plot=True, init_state=1)
 
-        # ---------------- SW1: Single-switch trajectory (half 0, half 1) ----------------
+        # ---------------- SW1: Single-switch ----------------
         total = n + burn
         states_single = np.zeros(total, dtype=int)
-        split = total // 2
-        states_single[split:] = 1
+        states_single[total // 2:] = 1
         self.simulate_ar(
-            [regA1, regA2],
-            T_base,
-            n=n,
-            burn_in=burn,
-            save_name=f"SW1_A1_single_switch{suffix}",
-            plot=True,
+            [regA1, regA2], T_base, n=n, burn_in=burn,
+            save_name=f"SW1_A1_single_switch{suffix}", plot=True,
             states_override=states_single,
         )
 
         print(f"\n[menu] All datasets (suffix={suffix}) saved to {self.save_dir.resolve()}\n")
 
 
-# ---------------- driver (runs all and saves plots) ----------------
+# ---------------- driver ----------------
 def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--n_instances", type=int, default=30,
-                    help="Number of instances per dataset type (default 30). "
-                         "Each instance uses a different RNG seed, giving different "
-                         "regime sequences but the same model parameters.")
-    ap.add_argument("--n", type=int, default=1000, help="Series length (default 1000)")
-    ap.add_argument("--burn", type=int, default=600, help="Burn-in (default 600)")
+                    help="Number of instances per dataset type (default 30).")
+    ap.add_argument("--n",    type=int, default=1000, help="Series length (default 1000)")
+    ap.add_argument("--burn", type=int, default=600,  help="Burn-in (default 600)")
+    ap.add_argument("--fixed_transitions", action="store_true",
+                    help="Disable Beta-sampled transitions; use fixed T_base for all instances.")
     args = ap.parse_args()
 
-    # Seeds for each instance — well-separated so regime sequences differ clearly
     seeds = [42 + i * 100 for i in range(args.n_instances)]
     print(f"Generating {args.n_instances} instance(s) per dataset type")
     print(f"Seeds: {seeds}")
-    print("Files named: <dataset>_r0.npz, <dataset>_r1.npz, ... (r0 = original)\n")
+    print(f"Transition sampling: {'fixed' if args.fixed_transitions else 'Beta-sampled (default)'}")
+    print("Files named: <dataset>_r0.npz, <dataset>_r1.npz, ...\n")
 
     for i, seed in enumerate(seeds):
         print(f"\n=== Instance r{i} (seed={seed}) ===")
-        gen = MSSwitchGenerator(save_dir=f"generated_data", seed=seed)
-        gen.make_datasets_menu(n=args.n, burn=args.burn, suffix=f"_r{i}")
+        gen = MSSwitchGenerator(save_dir="generated_data", seed=seed)
+        gen.make_datasets_menu(
+            n=args.n, burn=args.burn, suffix=f"_r{i}",
+            randomise_transitions=not args.fixed_transitions,
+        )
 
 if __name__ == "__main__":
     main()
