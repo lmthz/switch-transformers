@@ -53,7 +53,7 @@ CONFIGS: Dict[str, MSARConfig] = {
         switching_exog=True, use_exog=True
     ),
     "E2_level_shift": MSARConfig(
-        "E2_level_shift", order=2,
+        "E2_level_shift", order=1,
         switching_ar=False, switching_variance=False,
         switching_exog=True, use_exog=True
     ),

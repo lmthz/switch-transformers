@@ -443,13 +443,14 @@ class MSSwitchGenerator:
                               save_name=f"E1_drift_only{suffix}", plot=True)
 
         # ---------------- E2: LevelShiftOnly ----------------
-        regE3 = RegimeARMA(ar=np.array([0.7, -0.25]), ma=None, sigma=0.30,
-                           beta=np.array([+0.02]), name="pos")
-        regE4 = RegimeARMA(ar=np.array([0.7, -0.25]), ma=None, sigma=0.30,
-                           beta=np.array([-0.02]), name="neg")
+        # Pure level shift: no AR dynamics; regimes differ only in exogenous constant.
+        regE3 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.30,
+                           beta=np.array([0.0]), name="zero")
+        regE4 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.30,
+                           beta=np.array([0.5]), name="shift")
         X_const = np.ones(n + burn)
         self.simulate_sarimax([regE3, regE4], T_base, n=n,
-                              p=2, d=0, q=0, P=0, D=0, Q=0, s=1,
+                              p=0, d=0, q=0, P=0, D=0, Q=0, s=1,
                               X=X_const, burn_in=burn,
                               save_name=f"E2_level_shift{suffix}", plot=True)
 
