@@ -1,5 +1,26 @@
 # run_msar_all.py
 
+"""
+Run MSAR baseline on all evaluation datasets and save results to CSV.
+
+Strategy:
+- For each dataset, run full order selection on instance r0
+- Reuse the selected order for instances r1..r(n-1) — no re-selection
+- Average val_rmse across all instances, report mean and std
+- This makes running on 30 instances feasible without 30x the compute
+
+Resume behaviour (default):
+- If msar_results.csv already exists, datasets already in it are skipped
+- Results are written to disk after each dataset completes
+- Pass --fresh to ignore existing results and rerun everything
+
+Usage:
+  python run_msar_all.py                  # resume from existing CSV if present
+  python run_msar_all.py --fresh          # ignore existing results, rerun all
+  python run_msar_all.py --n_instances 3
+  python run_msar_all.py --out my_msar.csv
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -127,7 +148,7 @@ def main():
         if ds in HARD_DATASETS:
             n_restarts = args.n_restarts * 2   # 10 restarts
         elif ds in FAST_DATASETS:
-            n_restarts = 3                      # 3 restarts — slow to fit
+            n_restarts = 1                      # 1 restart — AR(10) too slow for more
         else:
             n_restarts = args.n_restarts        # 5 restarts (default)
 
