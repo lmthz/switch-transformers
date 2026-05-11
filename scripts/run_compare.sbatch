@@ -25,8 +25,8 @@ if [ ! -f "msar_results.csv" ]; then
     exit 1
 fi
 N_FOUND=$(ls generated_data/*_r*.npz 2>/dev/null | wc -l)
-if [ "$N_FOUND" -lt 63 ]; then
-    echo "[error] Only $N_FOUND dataset files found (need 63). Run: sbatch scripts/generate_data.sbatch"
+if [ "$N_FOUND" -lt 630 ]; then
+    echo "[error] Only $N_FOUND dataset files found (need 630). Run: sbatch scripts/generate_data.sbatch"
     exit 1
 fi
 echo "=== Prerequisites OK ($N_FOUND dataset files, msar_results.csv found) ==="
@@ -41,7 +41,7 @@ if [ -f "$POOL" ]; then
     echo "=== Pool already exists, skipping ==="
 else
     echo "=== Generating series pool on compute node CPUs ==="
-    python generate_pool.py --n_series 524288 --ar_coeff_scale 0.6 --out "$POOL"
+    python generate_pool.py --n_series 524288 --ar_coeff_scale 1.2 --ar_order_lo 2 --ar_order_hi 2 --out "$POOL"
 fi
 echo ""
 
@@ -50,12 +50,12 @@ python run_compare.py \
     --pool_path "$POOL" \
     --msar_csv msar_results.csv \
     --steps 10000 \
-    --ar_coeff_scale 0.6 \
-    --n_instances 3 \
-    --experiment_name decoder_3instances
+    --ar_coeff_scale 1.2 \
+    --n_instances 30 \
+    --experiment_name decoder_30instances
 
 echo ""
 echo "=== Complete ==="
-echo "Results: results_decoder_3instances.csv"
+echo "Results: results_decoder_30instances.csv"
 echo "Plot:    training_samples.png"
 echo "W&B:     run 'wandb sync wandb/' to upload logs"

@@ -178,7 +178,7 @@ def main():
     ap.add_argument("--out",            type=str,   default="series_pool.npz")
     ap.add_argument("--chunk_size",     type=int,   default=512)
     ap.add_argument(
-        "--ar_coeff_scale", type=float, default=0.6,
+        "--ar_coeff_scale", type=float, default=1.2,
         help="AR coefficient scale (default 0.6)."
     )
     ap.add_argument(
@@ -186,10 +186,10 @@ def main():
         choices=["full", "ar_only", "ar_arma", "ar_arma_arima"],
         help="Family mixture preset (default: full)."
     )
-    ap.add_argument("--ar_order_lo", type=int, default=1,
-                    help="Min AR order (default 1).")
-    ap.add_argument("--ar_order_hi", type=int, default=10,
-                    help="Max AR order (default 10).")
+    ap.add_argument("--ar_order_lo", type=int, default=2,
+                    help="Min AR order (default 2).")
+    ap.add_argument("--ar_order_hi", type=int, default=2,
+                    help="Max AR order (default 2).")
     args = ap.parse_args()
 
     generate_pool(

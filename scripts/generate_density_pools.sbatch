@@ -25,8 +25,8 @@ if [ -f "series_pool.npz" ]; then
     echo "series_pool.npz already exists, skipping"
 else
     echo "=== full pool (ar_order_hi=2) ==="
-    python generate_pool.py --n_series 524288 --ar_coeff_scale 0.6 \
-        --family_preset full --ar_order_lo 1 --ar_order_hi 2 \
+    python generate_pool.py --n_series 524288 --ar_coeff_scale 1.2 \
+        --family_preset full --ar_order_lo 2 --ar_order_hi 2 \
         --out series_pool.npz
 fi
 
@@ -35,8 +35,8 @@ if [ -f "pool_b1_ar_only.npz" ]; then
     echo "pool_b1_ar_only.npz already exists, skipping"
 else
     echo "=== B1: ar_only (ar_order_hi=2) ==="
-    python generate_pool.py --n_series 524288 --ar_coeff_scale 0.6 \
-        --family_preset ar_only --ar_order_lo 1 --ar_order_hi 2 \
+    python generate_pool.py --n_series 524288 --ar_coeff_scale 1.2 \
+        --family_preset ar_only --ar_order_lo 2 --ar_order_hi 2 \
         --out pool_b1_ar_only.npz
 fi
 
@@ -44,8 +44,8 @@ if [ -f "pool_b1_ar_arma.npz" ]; then
     echo "pool_b1_ar_arma.npz already exists, skipping"
 else
     echo "=== B1: ar_arma (ar_order_hi=2) ==="
-    python generate_pool.py --n_series 524288 --ar_coeff_scale 0.6 \
-        --family_preset ar_arma --ar_order_lo 1 --ar_order_hi 2 \
+    python generate_pool.py --n_series 524288 --ar_coeff_scale 1.2 \
+        --family_preset ar_arma --ar_order_lo 2 --ar_order_hi 2 \
         --out pool_b1_ar_arma.npz
 fi
 
@@ -53,8 +53,8 @@ if [ -f "pool_b1_ar_arma_arima.npz" ]; then
     echo "pool_b1_ar_arma_arima.npz already exists, skipping"
 else
     echo "=== B1: ar_arma_arima (ar_order_hi=2) ==="
-    python generate_pool.py --n_series 524288 --ar_coeff_scale 0.6 \
-        --family_preset ar_arma_arima --ar_order_lo 1 --ar_order_hi 2 \
+    python generate_pool.py --n_series 524288 --ar_coeff_scale 1.2 \
+        --family_preset ar_arma_arima --ar_order_lo 2 --ar_order_hi 2 \
         --out pool_b1_ar_arma_arima.npz
 fi
 
@@ -63,8 +63,8 @@ if [ -f "pool_b2_order2.npz" ]; then
     echo "pool_b2_order2.npz already exists, skipping"
 else
     echo "=== B2: ar_order_hi=2 ==="
-    python generate_pool.py --n_series 524288 --ar_coeff_scale 0.6 \
-        --family_preset full --ar_order_lo 1 --ar_order_hi 2 \
+    python generate_pool.py --n_series 524288 --ar_coeff_scale 1.2 \
+        --family_preset full --ar_order_lo 2 --ar_order_hi 2 \
         --out pool_b2_order2.npz
 fi
 
@@ -72,8 +72,8 @@ if [ -f "pool_b2_order4.npz" ]; then
     echo "pool_b2_order4.npz already exists, skipping"
 else
     echo "=== B2: ar_order_hi=4 ==="
-    python generate_pool.py --n_series 524288 --ar_coeff_scale 0.6 \
-        --family_preset full --ar_order_lo 1 --ar_order_hi 4 \
+    python generate_pool.py --n_series 524288 --ar_coeff_scale 1.2 \
+        --family_preset full --ar_order_lo 2 --ar_order_hi 4 \
         --out pool_b2_order4.npz
 fi
 
@@ -81,9 +81,18 @@ if [ -f "pool_b2_order6.npz" ]; then
     echo "pool_b2_order6.npz already exists, skipping"
 else
     echo "=== B2: ar_order_hi=6 ==="
-    python generate_pool.py --n_series 524288 --ar_coeff_scale 0.6 \
-        --family_preset full --ar_order_lo 1 --ar_order_hi 6 \
+    python generate_pool.py --n_series 524288 --ar_coeff_scale 1.2 \
+        --family_preset full --ar_order_lo 2 --ar_order_hi 6 \
         --out pool_b2_order6.npz
+fi
+
+if [ -f "pool_b2_order10.npz" ]; then
+    echo "pool_b2_order10.npz already exists, skipping"
+else
+    echo "=== B2: ar_order_hi=10 ==="
+    python generate_pool.py --n_series 524288 --ar_coeff_scale 1.2 \
+        --family_preset full --ar_order_lo 2 --ar_order_hi 10 \
+        --out pool_b2_order10.npz
 fi
 
 # ── B3 pools — coefficient scale, ar_order_hi=2 ───────────────
@@ -91,14 +100,14 @@ fi
 #   rm pool_b3_0.1.npz pool_b3_0.2.npz pool_b3_0.3.npz pool_b3_0.4.npz
 #   rm pool_b3_0.5.npz pool_b3_0.8.npz pool_b3_1.0.npz pool_b3_1.2.npz
 
-for SCALE in 0.1 0.2 0.3 0.4 0.5 0.8 1.0 1.2; do
+for SCALE in 0.1 0.2 0.3 0.4 0.5 0.6 0.8 1.0 1.2; do
     FNAME="pool_b3_${SCALE}.npz"
     if [ -f "$FNAME" ]; then
         echo "$FNAME already exists, skipping"
     else
         echo "=== B3: ar_coeff_scale=${SCALE} (ar_order_hi=2) ==="
         python generate_pool.py --n_series 524288 --ar_coeff_scale "$SCALE" \
-            --family_preset full --ar_order_lo 1 --ar_order_hi 2 \
+            --family_preset full --ar_order_lo 2 --ar_order_hi 2 \
             --out "$FNAME"
     fi
 done
@@ -117,8 +126,8 @@ for M in $M_VALUES; do
         ln -sf "$(pwd)/series_pool.npz" "$FNAME"
     else
         echo "=== D/E full: M=${M} (ar_order_hi=2) ==="
-        python generate_pool.py --n_series "$M" --ar_coeff_scale 0.6 \
-            --family_preset full --ar_order_lo 1 --ar_order_hi 2 \
+        python generate_pool.py --n_series "$M" --ar_coeff_scale 1.2 \
+            --family_preset full --ar_order_lo 2 --ar_order_hi 2 \
             --out "$FNAME"
     fi
 done
@@ -131,8 +140,8 @@ for M in $M_VALUES; do
         echo "$FNAME already exists, skipping"
     else
         echo "=== E ar_only: M=${M} (ar_order_hi=2) ==="
-        python generate_pool.py --n_series "$M" --ar_coeff_scale 0.6 \
-            --family_preset ar_only --ar_order_lo 1 --ar_order_hi 2 \
+        python generate_pool.py --n_series "$M" --ar_coeff_scale 1.2 \
+            --family_preset ar_only --ar_order_lo 2 --ar_order_hi 2 \
             --out "$FNAME"
     fi
 done

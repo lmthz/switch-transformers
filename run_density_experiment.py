@@ -25,15 +25,15 @@ B1 — Process family coverage sweep (most important)
      Train on subsets of the 10 sampler families:
        ar_only → ar_arma → ar_arma_arima → full
      Tests the Wang et al. question: does training on AR generalise to ARIMA?
-     Must generate on-the-fly — pool has fixed family mixture.
+     Uses pre-generated pools (one per family preset); falls back to on-the-fly if missing.
 
 B2 — AR order coverage sweep
      Restrict training to low-order AR, test on H1 (AR(10)).
-     Must generate on-the-fly — pool has fixed ar_order_hi=10.
+     Uses pre-generated pools (one per order condition); falls back to on-the-fly if missing.
 
 B3 — Coefficient magnitude sweep
      Vary ar_coeff_scale within the AR family.
-     Must generate on-the-fly — pool has fixed ar_coeff_scale=0.6.
+     Uses pre-generated pools (one per scale condition); falls back to on-the-fly if missing.
 
 C  — Training steps sweep (number of examples)
      500 to 100k steps, find threshold where learning saturates.
@@ -523,8 +523,8 @@ def run_experiment_b1(
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
         pool_for_preset = (b1_pools or {}).get(preset_name, None)
         sampler = build_sampler(
-            ar_coeff_scale=0.6, seed=seed,
-            ar_order_lo=1, ar_order_hi=2,  # hold order fixed at AR(2)
+            ar_coeff_scale=1.2, seed=seed,
+            ar_order_lo=2, ar_order_hi=2,
             pool_path=pool_for_preset,
             family_weights=weights,
         )
@@ -594,7 +594,7 @@ def run_experiment_b2(
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
         pool_for_order = (b2_pools or {}).get(name, None)
         sampler = build_sampler(
-            ar_coeff_scale=0.6,
+            ar_coeff_scale=1.2,
             ar_order_lo=lo, ar_order_hi=hi,
             seed=seed, pool_path=pool_for_order,
             family_weights=FAMILY_PRESETS["full"],
@@ -664,7 +664,7 @@ def run_experiment_b3(
         scale_seed = seed ^ int(scale * 1000)
         sampler = build_sampler(
             ar_coeff_scale=scale, seed=scale_seed,
-            ar_order_lo=1, ar_order_hi=2,  # hold order fixed at AR(2)
+            ar_order_lo=2, ar_order_hi=2,
             pool_path=pool_for_scale,
             family_weights=FAMILY_PRESETS["full"],
         )
@@ -702,7 +702,7 @@ def run_experiment_c(
 ) -> pd.DataFrame:
     """
     Vary training steps from 500 to 100k.
-    Uses the pre-generated pool (ar_coeff_scale=0.6, full family mixture).
+    Uses the pre-generated pool (ar_coeff_scale=1.2, full family mixture).
     Training distribution is held fixed — only quantity of examples varies.
 
     W&B loss curves from run_compare showed convergence around 20k steps.
@@ -711,7 +711,7 @@ def run_experiment_c(
     """
     print("\n" + "="*60)
     print("EXPERIMENT C: Training steps sweep")
-    print(f"  n_instances={n_instances}  ar_coeff_scale=0.6")
+    print(f"  n_instances={n_instances}  ar_coeff_scale=1.2")
     print(f"  pool_path={pool_path}")
     print("  Total series seen = steps x 128")
     print("="*60)
@@ -737,8 +737,8 @@ def run_experiment_c(
 
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
         sampler = build_sampler(
-            ar_coeff_scale=0.6, seed=seed,
-            ar_order_lo=1, ar_order_hi=2,  # hold order fixed at AR(2)
+            ar_coeff_scale=1.2, seed=seed,
+            ar_order_lo=2, ar_order_hi=2,
             pool_path=pool_path,
             family_weights=FAMILY_PRESETS["full"],
         )
@@ -849,8 +849,8 @@ def run_experiment_d(
             if candidate.exists():
                 pool_path_d = str(candidate)
         sampler = build_sampler(
-            ar_coeff_scale=0.6, seed=seed,
-            ar_order_lo=1, ar_order_hi=2,  # hold order fixed at AR(2)
+            ar_coeff_scale=1.2, seed=seed,
+            ar_order_lo=2, ar_order_hi=2,
             pool_path=pool_path_d,
             family_weights=FAMILY_PRESETS["full"],
         )
@@ -982,8 +982,8 @@ def run_experiment_e(
             # full uses ar_order_hi=10 (standard)
             order_hi = 2  # hold order fixed at AR(2) for all E conditions
             sampler = build_sampler(
-                ar_coeff_scale=0.6, seed=seed,
-                ar_order_lo=1, ar_order_hi=order_hi,
+                ar_coeff_scale=1.2, seed=seed,
+                ar_order_lo=2, ar_order_hi=order_hi,
                 pool_path=pool_path_e,
                 family_weights=weights,
             )

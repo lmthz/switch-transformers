@@ -110,7 +110,7 @@ def main():
         description="Train transformer and compare to pre-computed MSAR results."
     )
     ap.add_argument("--pool_path",       type=str,   default=None)
-    ap.add_argument("--ar_coeff_scale",  type=float, default=0.6)
+    ap.add_argument("--ar_coeff_scale",  type=float, default=1.2)
     ap.add_argument("--steps",           type=int,   default=100000)
     ap.add_argument("--experiment_name", type=str,   default=None)
     ap.add_argument("--n_instances",     type=int,   default=3)
