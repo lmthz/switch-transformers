@@ -85,7 +85,7 @@ DATASETS_B1 = [
 # Heatmap colour scale: ratio of transformer RMSE to per-dataset MSAR RMSE.
 # green (1.0) = matches MSAR; red (VMAX_RATIO) = saturated bad.
 VMIN_RATIO = 1.0
-VMAX_RATIO = 3.0
+VMAX_RATIO = 2.0
 
 
 def _ratio_heatmap(
@@ -180,7 +180,7 @@ def plot_experiment_b1(df: pd.DataFrame, out_dir: Path,
     if ds_cols:
         heat = df.set_index("family_preset")[ds_cols].T
         heat_plot = _ratio_heatmap(heat, msar_df)
-        cbar_label = ("RMSE / MSAR RMSE  (green ≈ MSAR, red = 3× MSAR)"
+        cbar_label = ("RMSE / MSAR RMSE  (green ≈ MSAR, red ≥ 2× MSAR)"
                       if msar_df is not None else "Val RMSE (no MSAR available)")
         vmin = VMIN_RATIO if msar_df is not None else 0.0
         vmax = VMAX_RATIO if msar_df is not None else 1.5
@@ -390,7 +390,7 @@ def plot_experiment_e(df: pd.DataFrame, out_dir: Path,
                 f"$2^{{{int(np.log2(m))}}}$" if m > 1 else str(int(m))
                 for m in heat_plot.columns
             ]
-            cbar_label = ("RMSE / MSAR RMSE  (green ≈ MSAR, red = 3× MSAR)"
+            cbar_label = ("RMSE / MSAR RMSE  (green ≈ MSAR, red ≥ 2× MSAR)"
                           if msar_df is not None else "Val RMSE (no MSAR available)")
             vmin = VMIN_RATIO if msar_df is not None else 0.0
             vmax = VMAX_RATIO if msar_df is not None else 1.5
@@ -405,7 +405,7 @@ def plot_experiment_e(df: pd.DataFrame, out_dir: Path,
             plt.colorbar(im, ax=ax, label=cbar_label)
             ax.set_title(
                 f"Exp E: Per-dataset RMSE heatmap — {PRESET_LABELS.get(preset, preset)}\n"
-                f"(ratio to MSAR per dataset; green ≈ MSAR, red = 3× worse)"
+                f"(ratio to MSAR per dataset; green ≈ MSAR, red ≥ 2× worse)"
             )
             save(fig, out_dir / f"exp_e_heatmap_{preset}.png")
 
