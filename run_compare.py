@@ -39,6 +39,7 @@ VAL_MONITOR_DATASETS = [
     "D1_arima211",             # ARIMA
     "F1_seasonal_sarimax",     # Seasonal
     "G1_exogenous_only",       # Exogenous
+    "H1_ar10_coeffs",          # AR(10) — OOD order generalisation
     "H2_ar1_near_unit_root",   # Near-unit-root
 ]
 

@@ -271,25 +271,43 @@ def train_and_eval(
 
 # One representative per process family for monitoring validation during training.
 # Using multiple families gives a more balanced signal than A1 alone.
-VAL_MONITOR_DATASETS = [
-    "A1_ar2_coeffs_easy",      # AR switching
-    "C1_arma21_coeffs_var",    # ARMA
-    "D1_arima211",             # ARIMA
-    "F1_seasonal_sarimax",     # Seasonal
-    "G1_exogenous_only",       # Exogenous
-    "H2_ar1_near_unit_root",   # Near-unit-root
+# Per-experiment val monitor datasets, aligned with each experiment's evaluation set.
+
+# B1, C, D, E all evaluate on DATASETS_B1 (excludes H1, H2, A3, NS0, NS1, SW1)
+VAL_MONITOR_B1CDE = [
+    "A1_ar2_coeffs_easy",   # AR switching
+    "C1_arma21_coeffs_var", # ARMA
+    "D1_arima211",          # ARIMA
+    "F1_seasonal_sarimax",  # Seasonal
+    "G1_exogenous_only",    # Exogenous
+    "E1_drift_only",        # Drift (pure exogenous)
+]
+
+# B2 evaluates on DATASETS_B2 (A1, A2, H1 only)
+VAL_MONITOR_B2 = [
+    "A1_ar2_coeffs_easy",   # AR(2) in-distribution control
+    "H1_ar10_coeffs",       # AR(10) OOD target — key B2 signal
+]
+
+# B3 evaluates on DATASETS_B3 (AR(2) datasets only)
+VAL_MONITOR_B3 = [
+    "A1_ar2_coeffs_easy",   # Main AR(2) target
+    "A2_ar2_coeffs_hard",   # Hard AR(2)
+    "S1_sparse_switching",  # Sparse-switching AR(2)
 ]
 
 
-def get_val_monitor_loader(data_dir, context_len, val_frac, batch_size):
+def get_val_monitor_loader(data_dir, context_len, val_frac, batch_size, datasets=None):
     """
-    Build a combined validation DataLoader from one dataset per process family.
-    Gives a more balanced training signal than monitoring on A1 alone.
+    Build a combined validation DataLoader for training monitoring.
+    Pass a per-experiment dataset list; defaults to VAL_MONITOR_B1CDE.
     Missing files are skipped gracefully.
     """
     from torch.utils.data import ConcatDataset
+    if datasets is None:
+        datasets = VAL_MONITOR_B1CDE
     val_sets = []
-    for ds in VAL_MONITOR_DATASETS:
+    for ds in datasets:
         npz = Path(data_dir) / f"{ds}_r0.npz"
         if npz.exists():
             _, ds_val, _, _ = make_train_val_datasets(str(npz), context_len, val_frac)
@@ -510,7 +528,7 @@ def run_experiment_b1(
     batch_size  = 128
     lr          = 3e-4
     val_frac    = 0.3
-    val_loader  = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
+    val_loader  = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size, VAL_MONITOR_B1CDE)
     rows        = []
 
     for preset_name, weights in FAMILY_PRESETS.items():
@@ -576,7 +594,7 @@ def run_experiment_b2(
     batch_size  = 128
     lr          = 3e-4
     val_frac    = 0.3
-    val_loader  = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
+    val_loader  = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size, VAL_MONITOR_B2)
 
     order_configs = [
         ("lo_order",  2, 2),
@@ -646,7 +664,7 @@ def run_experiment_b3(
     batch_size  = 128
     lr          = 3e-4
     val_frac    = 0.3
-    val_loader  = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
+    val_loader  = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size, VAL_MONITOR_B3)
 
     scales = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2]
     rows   = []
@@ -724,7 +742,7 @@ def run_experiment_c(
     batch_size  = 128
     lr          = 3e-4
     val_frac    = 0.3
-    val_loader  = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
+    val_loader  = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size, VAL_MONITOR_B1CDE)
 
     step_counts = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 25000, 50000, 100000]
     rows = []
@@ -832,7 +850,7 @@ def run_experiment_d(
     M_values = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
                 65536, 131072, 262144, 524288]
 
-    val_loader = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
+    val_loader = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size, VAL_MONITOR_B1CDE)
     rows = []
 
     for M in M_values:
@@ -953,7 +971,7 @@ def run_experiment_e(
     M_values = [128, 256, 512, 1024, 2048, 4096, 8192, 16384,
                 32768, 65536, 131072, 262144, 524288]
 
-    val_loader = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
+    val_loader = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size, VAL_MONITOR_B1CDE)
     rows = []
 
     for preset_name in ["ar_only", "full"]:
