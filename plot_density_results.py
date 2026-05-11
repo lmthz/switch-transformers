@@ -63,6 +63,48 @@ PRESET_LABELS = {
     "full":          "Full mixture",
 }
 
+# Datasets used in B1, C, D, E heatmaps (excludes H1, H2, A3, NS0, NS1, SW1)
+DATASETS_B1 = [
+    "A1_ar2_coeffs_easy",
+    "A2_ar2_coeffs_hard",
+    "B1_ar2_variance",
+    "B2_ar2_variance_big",
+    "C1_arma21_coeffs_var",
+    "D1_arima211",
+    "D2_arima221",
+    "D3_arima210",
+    "E1_drift_only",
+    "E2_level_shift",
+    "F1_seasonal_sarimax",
+    "F2_seasonal_exog",
+    "G1_exogenous_only",
+    "S1_sparse_switching",
+    "S2_frequent_switching",
+]
+
+# Heatmap colour scale: ratio of transformer RMSE to per-dataset MSAR RMSE.
+# green (1.0) = matches MSAR; red (VMAX_RATIO) = saturated bad.
+VMIN_RATIO = 1.0
+VMAX_RATIO = 3.0
+
+
+def _ratio_heatmap(
+    heat: pd.DataFrame, msar_df: Optional[pd.DataFrame]
+) -> pd.DataFrame:
+    """
+    Divide each row (dataset) by its MSAR val RMSE.
+    Rows with no MSAR entry are left as raw RMSE (uncomparable; flag in caller).
+    """
+    if msar_df is None:
+        return heat
+    out = heat.copy().astype(float)
+    for ds in heat.index:
+        if ds in msar_df.index:
+            msar_val = float(msar_df.loc[ds, "msar_val_rmse"])
+            if msar_val > 0 and not np.isnan(msar_val):
+                out.loc[ds] = heat.loc[ds] / msar_val
+    return out
+
 
 def load_msar(msar_csv: str) -> Optional[pd.DataFrame]:
     p = Path(msar_csv)
@@ -107,7 +149,8 @@ def plot_experiment_a(df: pd.DataFrame, out_dir: Path):
 # EXPERIMENT B1 — Family coverage grouped bars + heatmap
 # ================================================================
 
-def plot_experiment_b1(df: pd.DataFrame, out_dir: Path):
+def plot_experiment_b1(df: pd.DataFrame, out_dir: Path,
+                       msar_df: Optional[pd.DataFrame] = None):
     print("Plotting Experiment B1...")
 
     presets = df["family_preset"].tolist()
@@ -133,29 +176,25 @@ def plot_experiment_b1(df: pd.DataFrame, out_dir: Path):
     save(fig, out_dir / "exp_b1_grouped_bars.png")
 
     # ── Per-dataset heatmap ──────────────────────────────────────
-    dataset_cols = [c for c in df.columns if c.startswith("val_") or
-                    (c not in ["family_preset","steps","mean_all","mean_ar",
-                               "mean_arima","mean_seasonal","mean_exog",
-                               "mean_gap_vs_msar"] and "_" in c and "rmse" not in c)]
-    # Fall back to dataset-specific columns
-    ds_cols = [c for c in df.columns if c.startswith("A") or c.startswith("B") or
-               c.startswith("C") or c.startswith("D") or c.startswith("E") or
-               c.startswith("F") or c.startswith("G") or c.startswith("H") or
-               c.startswith("S") or c.startswith("N")]
-    ds_cols = [c for c in ds_cols if c in df.columns]
-
+    ds_cols = [c for c in DATASETS_B1 if c in df.columns]
     if ds_cols:
         heat = df.set_index("family_preset")[ds_cols].T
+        heat_plot = _ratio_heatmap(heat, msar_df)
+        cbar_label = ("RMSE / MSAR RMSE  (green ≈ MSAR, red = 3× MSAR)"
+                      if msar_df is not None else "Val RMSE (no MSAR available)")
+        vmin = VMIN_RATIO if msar_df is not None else 0.0
+        vmax = VMAX_RATIO if msar_df is not None else 1.5
+
         fig, ax = plt.subplots(figsize=(7, 10))
-        im = ax.imshow(heat.values, aspect="auto", cmap="RdYlGn_r",
-                       vmin=0, vmax=1.2)
-        ax.set_xticks(range(len(heat.columns)))
-        ax.set_xticklabels([PRESET_LABELS.get(c, c) for c in heat.columns],
+        im = ax.imshow(heat_plot.values, aspect="auto", cmap="RdYlGn_r",
+                       vmin=vmin, vmax=vmax)
+        ax.set_xticks(range(len(heat_plot.columns)))
+        ax.set_xticklabels([PRESET_LABELS.get(c, c) for c in heat_plot.columns],
                            rotation=20, ha="right", fontsize=8)
-        ax.set_yticks(range(len(heat.index)))
-        ax.set_yticklabels(heat.index, fontsize=7)
-        plt.colorbar(im, ax=ax, label="Val RMSE")
-        ax.set_title("Exp B1: Per-dataset RMSE heatmap\n(green=low RMSE, red=high)")
+        ax.set_yticks(range(len(heat_plot.index)))
+        ax.set_yticklabels(heat_plot.index, fontsize=7)
+        plt.colorbar(im, ax=ax, label=cbar_label)
+        ax.set_title("Exp B1: Per-dataset RMSE heatmap\n(ratio to MSAR per dataset)")
         save(fig, out_dir / "exp_b1_heatmap.png")
 
 
@@ -204,7 +243,7 @@ def plot_experiment_b3(df: pd.DataFrame, out_dir: Path):
         ax.plot(scales, df["A1_ar2_coeffs_easy"], "^--", color="#e74c3c",
                 label="A1 (has coeff 1.2)", lw=1.5)
 
-    ax.axvline(0.6, color="gray", linestyle=":", lw=1, label="Default scale=0.6")
+    ax.axvline(1.2, color="gray", linestyle=":", lw=1, label="Default scale (1.2)")
     ax.set_xlabel("ar_coeff_scale (training coefficient range)")
     ax.set_ylabel("Val RMSE")
     ax.set_title("Exp B3: AR coefficient magnitude\nEffect of restricting coefficient range")
@@ -340,6 +379,36 @@ def plot_experiment_e(df: pd.DataFrame, out_dir: Path,
         ticker.FuncFormatter(lambda x, _: f"2$^{{{int(np.log2(x))}}}$" if x > 1 else str(int(x))))
     save(fig, out_dir / "exp_e_diversity_x_class_arima.png")
 
+    # ── Per-dataset heatmap (one per preset) ─────────────────────
+    ds_cols = [c for c in DATASETS_B1 if c in df.columns]
+    if ds_cols:
+        for preset in presets:
+            sub = df[df["family_preset"] == preset].sort_values("M")
+            heat = sub.set_index("M")[ds_cols].T  # rows=datasets, cols=M values
+            heat_plot = _ratio_heatmap(heat, msar_df)
+            M_labels = [
+                f"$2^{{{int(np.log2(m))}}}$" if m > 1 else str(int(m))
+                for m in heat_plot.columns
+            ]
+            cbar_label = ("RMSE / MSAR RMSE  (green ≈ MSAR, red = 3× MSAR)"
+                          if msar_df is not None else "Val RMSE (no MSAR available)")
+            vmin = VMIN_RATIO if msar_df is not None else 0.0
+            vmax = VMAX_RATIO if msar_df is not None else 1.5
+
+            fig, ax = plt.subplots(figsize=(14, 8))
+            im = ax.imshow(heat_plot.values, aspect="auto", cmap="RdYlGn_r",
+                           vmin=vmin, vmax=vmax)
+            ax.set_xticks(range(len(heat_plot.columns)))
+            ax.set_xticklabels(M_labels, rotation=45, ha="right", fontsize=8)
+            ax.set_yticks(range(len(heat_plot.index)))
+            ax.set_yticklabels(heat_plot.index, fontsize=7)
+            plt.colorbar(im, ax=ax, label=cbar_label)
+            ax.set_title(
+                f"Exp E: Per-dataset RMSE heatmap — {PRESET_LABELS.get(preset, preset)}\n"
+                f"(ratio to MSAR per dataset; green ≈ MSAR, red = 3× worse)"
+            )
+            save(fig, out_dir / f"exp_e_heatmap_{preset}.png")
+
 
 # ================================================================
 # Main
@@ -366,7 +435,7 @@ def main():
 
     exp_map = {
         "A":  ("results_density_exp_a.csv",  plot_experiment_a,  False),
-        "B1": ("results_density_exp_b1.csv", plot_experiment_b1, False),
+        "B1": ("results_density_exp_b1.csv", plot_experiment_b1, True),
         "B2": ("results_density_exp_b2.csv", plot_experiment_b2, False),
         "B3": ("results_density_exp_b3.csv", plot_experiment_b3, False),
         "C":  ("results_density_exp_c.csv",  plot_experiment_c,  True),
