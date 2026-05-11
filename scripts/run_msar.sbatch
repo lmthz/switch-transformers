@@ -3,7 +3,7 @@
 #SBATCH -p mit_normal_gpu
 #SBATCH --gres=gpu:0
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --mem=32G
 #SBATCH -t 06:00:00
 #SBATCH -o logs/%x_%j.out
 #SBATCH -e logs/%x_%j.err
