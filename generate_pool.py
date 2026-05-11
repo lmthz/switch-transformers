@@ -171,7 +171,7 @@ def main():
     ap = argparse.ArgumentParser(
         description="Pre-generate synthetic MSAR series pool for training."
     )
-    ap.add_argument("--n_series",       type=int,   default=500_000)
+    ap.add_argument("--n_series",       type=int,   default=524_288)
     ap.add_argument("--series_len",     type=int,   default=512)
     ap.add_argument("--burn_in",        type=int,   default=100)
     ap.add_argument("--seed",           type=int,   default=42)

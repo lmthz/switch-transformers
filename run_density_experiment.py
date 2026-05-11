@@ -828,9 +828,9 @@ def run_experiment_d(
 
     # M values — log-spaced from very small to large
     # At M=128: steps = 1  (essentially no training)
-    # At M=500k: steps = 3906 (full pool, matches main run_compare)
+    # At M=524288: steps = 4096 (full pool, matches main run_compare)
     M_values = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
-                65536, 131072, 262144, 500000]
+                65536, 131072, 262144, 524288]
 
     val_loader = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
     rows = []
@@ -951,7 +951,7 @@ def run_experiment_e(
     val_frac    = 0.3
 
     M_values = [128, 256, 512, 1024, 2048, 4096, 8192, 16384,
-                32768, 65536, 131072, 262144, 500000]
+                32768, 65536, 131072, 262144, 524288]
 
     val_loader = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
     rows = []

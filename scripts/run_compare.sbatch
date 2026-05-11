@@ -41,7 +41,7 @@ if [ -f "$POOL" ]; then
     echo "=== Pool already exists, skipping ==="
 else
     echo "=== Generating series pool on compute node CPUs ==="
-    python generate_pool.py --n_series 500000 --ar_coeff_scale 0.6 --out "$POOL"
+    python generate_pool.py --n_series 524288 --ar_coeff_scale 0.6 --out "$POOL"
 fi
 echo ""
 

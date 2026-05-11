@@ -114,7 +114,7 @@ wandb sync wandb/offline-run-<id>
 #   B2: AR order coverage (p_max = 2/4/6/10)
 #   B3: Coefficient magnitude sweep (ar_coeff_scale 0.1–1.2)
 #   C:  Training steps sweep (50–100k steps, fixed pool)
-#   D:  Pool size sweep (M = 128–500k, each series seen once)
+#   D:  Pool size sweep (M = 128–524k, each series seen once)
 #   E:  Pool size x family preset (ar_only vs full, same M range as D)
 #
 # Prerequisites: msar_results.csv and generated_data/ must exist.
