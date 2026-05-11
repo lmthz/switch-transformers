@@ -25,8 +25,8 @@ if [ ! -f "msar_results.csv" ]; then
     exit 1
 fi
 N_FOUND=$(ls generated_data/*_r*.npz 2>/dev/null | wc -l)
-if [ "$N_FOUND" -lt 63 ]; then
-    echo "[error] Only $N_FOUND dataset files found (need 63). Run: sbatch scripts/generate_data.sbatch"
+if [ "$N_FOUND" -lt 630 ]; then
+    echo "[error] Only $N_FOUND dataset files found (need 630). Run: sbatch scripts/generate_data.sbatch"
     exit 1
 fi
 

@@ -45,10 +45,10 @@ def generate_pool(
     seed: int,
     out_path: str,
     chunk_size: int = 512,
-    ar_coeff_scale: float = 0.6,
+    ar_coeff_scale: float = 1.2,
     family_preset: str = "full",
-    ar_order_lo: int = 1,
-    ar_order_hi: int = 10,
+    ar_order_lo: int = 2,
+    ar_order_hi: int = 2,
 ) -> None:
     # Derive a unique seed from all parameters that affect series content.
     # Fix for B3 pool bug: previously all pools used seed=42 regardless of
@@ -179,7 +179,7 @@ def main():
     ap.add_argument("--chunk_size",     type=int,   default=512)
     ap.add_argument(
         "--ar_coeff_scale", type=float, default=1.2,
-        help="AR coefficient scale (default 0.6)."
+        help="AR coefficient scale (default 1.2)."
     )
     ap.add_argument(
         "--family_preset", type=str, default="full",

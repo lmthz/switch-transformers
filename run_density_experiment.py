@@ -166,9 +166,9 @@ def build_model(context_len, d_model, n_heads, n_layers, dropout, seed, device):
 
 
 def build_sampler(
-    ar_coeff_scale: float = 0.6,
-    ar_order_lo: int = 1,
-    ar_order_hi: int = 10,
+    ar_coeff_scale: float = 1.2,
+    ar_order_lo: int = 2,
+    ar_order_hi: int = 2,
     seed: int = 0,
     pool_path: Optional[str] = None,
     family_weights: Optional[dict] = None,
@@ -579,10 +579,10 @@ def run_experiment_b2(
     val_loader  = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size)
 
     order_configs = [
-        ("lo_order",  1, 2),
-        ("mid_order", 1, 4),
-        ("hi_order",  1, 6),
-        ("full",      1, 10),
+        ("lo_order",  2, 2),
+        ("mid_order", 2, 4),
+        ("hi_order",  2, 6),
+        ("full",      2, 10),
     ]
     rows = []
 
