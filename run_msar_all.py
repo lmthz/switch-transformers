@@ -10,9 +10,12 @@ Strategy:
 - This makes running on 30 instances feasible without 30x the compute
 
 Resume behaviour (default):
-- If msar_results.csv already exists, datasets already in it are skipped
-- Results are written to disk after each dataset completes
-- Pass --fresh to ignore existing results and rerun everything
+- Instance-level checkpoint (msar_instance_checkpoint.csv) is written after
+  every single instance, so a wall-time kill mid-dataset loses only the
+  current instance.
+- Dataset-level results (msar_results.csv) are written once all instances
+  for a dataset complete, aggregated from the instance checkpoint.
+- Pass --fresh to ignore existing results and rerun everything.
 
 Usage:
   python run_msar_all.py                  # resume from existing CSV if present
@@ -83,12 +86,16 @@ def main():
     ap.add_argument("--n_restarts", type=int, default=5,
                     help="Random restarts per fit to handle convergence failures (default 5).")
     ap.add_argument("--out", type=str, default="msar_results.csv")
+    ap.add_argument("--instance_checkpoint", type=str,
+                    default="msar_instance_checkpoint.csv",
+                    help="Per-instance checkpoint file (written after every instance).")
     ap.add_argument("--fresh", action="store_true",
                     help="Ignore any existing results and rerun all datasets from scratch.")
     args = ap.parse_args()
 
     data_dir = Path(args.data_dir)
     out_path = Path(args.out)
+    inst_path = Path(args.instance_checkpoint)
 
     candidate_orders = [2, 3, 4, 5, 6, 8, 10]
     maxiter = 150
@@ -97,8 +104,18 @@ def main():
     # Extra restarts for datasets with frequent convergence failures
     HARD_DATASETS = {"F1_seasonal_sarimax", "F2_seasonal_exog",
                      "D1_arima211", "D2_arima221", "D3_arima210"}
-    # H1 AR(10) is slow to fit — use fewer restarts to stay within wall time
-    FAST_DATASETS = {"H1_ar10_coeffs"}
+    # H1 AR(10) and ARMA are slow to fit — use fewer restarts to stay within wall time
+    FAST_DATASETS = {"H1_ar10_coeffs", "C1_arma21_coeffs_var"}
+
+    # ── Resume: load instance-level checkpoint ────────────────────────
+    # inst_done[(dataset, ri)] = {"val_rmse": ..., "train_rmse": ...}
+    inst_done: dict[tuple[str, int], Dict[str, Any]] = {}
+    inst_rows: List[Dict[str, Any]] = []
+    if inst_path.exists() and not args.fresh:
+        inst_df = pd.read_csv(inst_path)
+        for _, row in inst_df.iterrows():
+            inst_done[(row["dataset"], int(row["instance"]))] = row.to_dict()
+        inst_rows = inst_df.to_dict("records")
 
     # ── Resume: load already-completed datasets ───────────────────────
     completed: set[str] = set()
@@ -140,44 +157,63 @@ def main():
 
         print(f"[{i+1:2d}/{len(DATASETS)}] {ds}", flush=True)
 
-        # ── Step 1: full order selection on r0 ───────────────────────
-        ds_r0 = f"{ds}_r0"
-        r0_result = None
-        selected_order = None
-
         if ds in HARD_DATASETS:
             n_restarts = args.n_restarts * 2   # 10 restarts
         elif ds in FAST_DATASETS:
-            n_restarts = 1                      # 1 restart — AR(10) too slow for more
+            n_restarts = 1                      # 1 restart — slow datasets
         else:
             n_restarts = args.n_restarts        # 5 restarts (default)
 
-        try:
-            r0_result = run_msar(
-                ds,
-                data_dir=data_dir,
-                val_frac=args.val_frac,
-                candidate_orders=candidate_orders,
-                maxiter=maxiter,
-                em_iter=em_iter,
-                file_name=ds_r0,
-                n_restarts=n_restarts,
-            )
-            selected_order = r0_result.get("selected_order", r0_result["order"])
-            print(f"  r0: val={r0_result['val_rmse']:.4f}  "
-                  f"order={selected_order}  "
-                  f"regime_acc={r0_result['regime_accuracy']:.3f}")
-        except Exception as e:
-            print(f"  r0: [FAILED] {e}")
+        # ── Step 1: order selection on r0 (run if not already done) ──
+        r0_result = None
+        selected_order = None
+
+        if (ds, 0) in inst_done:
+            cached = inst_done[(ds, 0)]
+            selected_order = int(cached["selected_order"])
+            r0_result = cached
+            print(f"  r0: [cached] val={cached['val_rmse']:.4f}  order={selected_order}")
+        else:
+            ds_r0 = f"{ds}_r0"
+            try:
+                r0_result = run_msar(
+                    ds,
+                    data_dir=data_dir,
+                    val_frac=args.val_frac,
+                    candidate_orders=candidate_orders,
+                    maxiter=maxiter,
+                    em_iter=em_iter,
+                    file_name=ds_r0,
+                    n_restarts=n_restarts,
+                )
+                selected_order = r0_result.get("selected_order", r0_result["order"])
+                print(f"  r0: val={r0_result['val_rmse']:.4f}  "
+                      f"order={selected_order}  "
+                      f"regime_acc={r0_result['regime_accuracy']:.3f}")
+                inst_row = {
+                    "dataset": ds, "instance": 0,
+                    "val_rmse": r0_result["val_rmse"],
+                    "train_rmse": r0_result["train_rmse"],
+                    "selected_order": selected_order,
+                    "regime_accuracy": r0_result["regime_accuracy"],
+                    "noise_rmse": r0_result["noise_rmse"],
+                    "oracle_model_rmse": r0_result["oracle_model_rmse"],
+                }
+                inst_rows.append(inst_row)
+                inst_done[(ds, 0)] = inst_row
+                pd.DataFrame(inst_rows).to_csv(inst_path, index=False)
+            except Exception as e:
+                print(f"  r0: [FAILED] {e}")
+
+        if selected_order is None:
+            print(f"  skipping r1+ (no order selected for {ds})")
+            continue
 
         # ── Step 2: fixed order on r1..r(n-1) ────────────────────────
-        all_val_rmse = []
-        all_train_rmse = []
-        if r0_result is not None:
-            all_val_rmse.append(r0_result["val_rmse"])
-            all_train_rmse.append(r0_result["train_rmse"])
-
         for ri in range(1, args.n_instances):
+            if (ds, ri) in inst_done:
+                print(f"  r{ri}: [cached]")
+                continue
             ds_ri = f"{ds}_r{ri}"
             npz = data_dir / f"{ds_ri}.npz"
             if not npz.exists():
@@ -193,28 +229,40 @@ def main():
                     em_iter=em_iter,
                     n_restarts=n_restarts,
                 )
-                all_val_rmse.append(ri_result["val_rmse"])
-                all_train_rmse.append(ri_result["train_rmse"])
+                inst_row = {
+                    "dataset": ds, "instance": ri,
+                    "val_rmse": ri_result["val_rmse"],
+                    "train_rmse": ri_result["train_rmse"],
+                    "selected_order": selected_order,
+                    "regime_accuracy": float("nan"),
+                    "noise_rmse": float("nan"),
+                    "oracle_model_rmse": float("nan"),
+                }
+                inst_rows.append(inst_row)
+                inst_done[(ds, ri)] = inst_row
+                pd.DataFrame(inst_rows).to_csv(inst_path, index=False)
             except Exception as e:
                 print(f"  r{ri}: [FAILED] {e}")
 
-        # Filter NaNs
-        val_finite = [v for v in all_val_rmse if np.isfinite(v)]
-        train_finite = [v for v in all_train_rmse if np.isfinite(v)]
-        n_ok = len(val_finite)
-        n_ran = len(all_val_rmse)
+        # ── Aggregate from instance checkpoint ────────────────────────
+        ds_instances = [inst_done[(ds, ri)] for ri in range(args.n_instances)
+                        if (ds, ri) in inst_done]
+        all_val   = [r["val_rmse"]   for r in ds_instances if np.isfinite(r["val_rmse"])]
+        all_train = [r["train_rmse"] for r in ds_instances if np.isfinite(r["train_rmse"])]
+        n_ok  = len(all_val)
+        n_ran = len(ds_instances)
 
-        val_mean = float(np.mean(val_finite)) if val_finite else float("nan")
-        val_std  = float(np.std(val_finite))  if val_finite else float("nan")
-        tr_mean  = float(np.mean(train_finite)) if train_finite else float("nan")
+        val_mean = float(np.mean(all_val))   if all_val   else float("nan")
+        val_std  = float(np.std(all_val))    if all_val   else float("nan")
+        tr_mean  = float(np.mean(all_train)) if all_train else float("nan")
 
         if n_ran > 0 and n_ok < n_ran:
-            print(f"  note: {n_ran - n_ok}/{n_ran} instances returned NaN val_rmse (filtered out)")
-        print(f"  mean val_rmse={val_mean:.4f} ± {val_std:.4f}  ({n_ok}/{args.n_instances} valid instances)")
+            print(f"  note: {n_ran - n_ok}/{n_ran} instances returned NaN (filtered out)")
+        print(f"  mean val_rmse={val_mean:.4f} ± {val_std:.4f}  ({n_ok}/{args.n_instances} valid)")
 
         new_rows.append({
             "dataset":           ds,
-            "msar_order":        selected_order if selected_order is not None else float("nan"),
+            "msar_order":        selected_order,
             "msar_train_rmse":   tr_mean,
             "msar_val_rmse":     val_mean,
             "msar_val_rmse_std": val_std,
@@ -224,7 +272,7 @@ def main():
             "oracle_model_rmse": r0_result["oracle_model_rmse"] if r0_result else float("nan"),
         })
 
-        # ── Write to disk after every dataset (enables resume) ────────
+        # ── Write dataset-level CSV once all instances are done ───────
         all_rows = existing_rows + new_rows
         pd.DataFrame(all_rows).to_csv(out_path, index=False)
 
