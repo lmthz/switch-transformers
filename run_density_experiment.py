@@ -104,10 +104,13 @@ DATASETS_B1 = [
     "S1_sparse_switching", "S2_frequent_switching",    # Switching variants
 ]
 
-# B2 (AR order): only datasets where order is the varying dimension
-# H1 is AR(10) — the OOD target. A1/A2 are AR(2) — in-distribution control.
+# B2 (AR order): evaluation order coverage matches training order coverage.
+# A1/A2 are AR(2) in-distribution controls; H3/H4/H1 are OOD targets at
+# increasing order (4, 6, 10) using the same coefficient decay pattern.
 DATASETS_B2 = [
     "A1_ar2_coeffs_easy", "A2_ar2_coeffs_hard",       # AR(2) control
+    "H3_ar4_coeffs",                                   # AR(4) OOD target
+    "H4_ar6_coeffs",                                   # AR(6) OOD target
     "H1_ar10_coeffs",                                  # AR(10) OOD target
 ]
 
@@ -626,8 +629,11 @@ def run_experiment_b2(
         )
 
         h1 = results.get("H1_ar10_coeffs", float("nan"))
+        h4 = results.get("H4_ar6_coeffs",  float("nan"))
+        h3 = results.get("H3_ar4_coeffs",  float("nan"))
         a1 = results.get("A1_ar2_coeffs_easy", float("nan"))
-        print(f"  H1 (AR10): {h1:.4f}  A1 (AR2): {a1:.4f}  "
+        print(f"  H1 (AR10): {h1:.4f}  H4 (AR6): {h4:.4f}  "
+              f"H3 (AR4): {h3:.4f}  A1 (AR2): {a1:.4f}  "
               f"mean_all: {results['mean_all']:.4f}")
 
         row = {"order_name": name, "ar_order_lo": lo, "ar_order_hi": hi, "steps": steps}
@@ -636,7 +642,8 @@ def run_experiment_b2(
 
     df = pd.DataFrame(rows)
     print("\nExperiment B2 summary:")
-    cols = ["order_name", "ar_order_hi", "H1_ar10_coeffs", "A1_ar2_coeffs_easy", "mean_all"]
+    cols = ["order_name", "ar_order_hi", "H1_ar10_coeffs", "H4_ar6_coeffs",
+            "H3_ar4_coeffs", "A1_ar2_coeffs_easy", "mean_all"]
     available = [c for c in cols if c in df.columns]
     print(df[available].to_string(index=False))
     return df

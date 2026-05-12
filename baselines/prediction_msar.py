@@ -71,6 +71,8 @@ CONFIGS: Dict[str, MSARConfig] = {
         switching_exog=True, use_exog=True
     ),
 
+    "H3_ar4_coeffs": MSARConfig("H3_ar4_coeffs", order=4),
+    "H4_ar6_coeffs": MSARConfig("H4_ar6_coeffs", order=6),
     "H1_ar10_coeffs": MSARConfig("H1_ar10_coeffs", order=10),
     "H2_ar1_near_unit_root": MSARConfig("H2_ar1_near_unit_root", order=1),
 

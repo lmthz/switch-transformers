@@ -42,7 +42,8 @@ DATASETS: List[str] = [
     "B1_ar2_variance", "B2_ar2_variance_big", "C1_arma21_coeffs_var",
     "D1_arima211", "D2_arima221", "D3_arima210",
     "E1_drift_only", "E2_level_shift", "F1_seasonal_sarimax",
-    "F2_seasonal_exog", "G1_exogenous_only", "H1_ar10_coeffs",
+    "F2_seasonal_exog", "G1_exogenous_only",
+    "H3_ar4_coeffs", "H4_ar6_coeffs", "H1_ar10_coeffs",
     "H2_ar1_near_unit_root", "S1_sparse_switching", "S2_frequent_switching",
     "NS0_A1_no_switch_regime0", "NS1_A1_no_switch_regime1", "SW1_A1_single_switch",
 ]

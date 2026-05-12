@@ -202,14 +202,21 @@ def plot_experiment_b1(df: pd.DataFrame, out_dir: Path,
 # EXPERIMENT B2 — H1 vs A1 by AR order
 # ================================================================
 
-def plot_experiment_b2(df: pd.DataFrame, out_dir: Path):
+def plot_experiment_b2(df: pd.DataFrame, out_dir: Path, msar_df=None):
     print("Plotting Experiment B2...")
-    fig, ax = plt.subplots(figsize=(7, 4.5))
 
+    # ── Line plot ─────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 4.5))
     order_hi = df["ar_order_hi"].tolist()
-    if "H1_ar10_coeffs" in df.columns:
-        ax.plot(order_hi, df["H1_ar10_coeffs"], "o-", color="#e74c3c",
-                label="H1 AR(10) — OOD", lw=2)
+
+    ood_series = [
+        ("H3_ar4_coeffs",  "H3 AR(4) — OOD",  "#f39c12"),
+        ("H4_ar6_coeffs",  "H4 AR(6) — OOD",  "#e67e22"),
+        ("H1_ar10_coeffs", "H1 AR(10) — OOD", "#e74c3c"),
+    ]
+    for col, label, color in ood_series:
+        if col in df.columns:
+            ax.plot(order_hi, df[col], "o-", color=color, label=label, lw=2)
     if "A1_ar2_coeffs_easy" in df.columns:
         ax.plot(order_hi, df["A1_ar2_coeffs_easy"], "s--", color=TR_COLOR,
                 label="A1 AR(2) — in-distribution", lw=2)
@@ -219,9 +226,41 @@ def plot_experiment_b2(df: pd.DataFrame, out_dir: Path):
 
     ax.set_xlabel("Max AR order in training pool (ar_order_hi)")
     ax.set_ylabel("Val RMSE")
-    ax.set_title("Exp B2: AR order coverage\nDoes restricting training order hurt AR(10)?")
+    ax.set_title("Exp B2: AR order coverage\nDoes restricting training order hurt high-order AR?")
     ax.legend()
     save(fig, out_dir / "exp_b2_order_coverage.png")
+
+    # ── Heatmap ───────────────────────────────────────────────────
+    if msar_df is None:
+        return
+    b2_datasets = ["A1_ar2_coeffs_easy", "A2_ar2_coeffs_hard",
+                   "H3_ar4_coeffs", "H4_ar6_coeffs", "H1_ar10_coeffs"]
+    order_cols = df["ar_order_hi"].astype(str).tolist()
+    heat = pd.DataFrame(index=b2_datasets, columns=order_cols, dtype=float)
+    for _, row in df.iterrows():
+        col = str(int(row["ar_order_hi"]))
+        for ds in b2_datasets:
+            if ds in row:
+                heat.loc[ds, col] = row[ds]
+
+    present = [ds for ds in b2_datasets if ds in heat.index and not heat.loc[ds].isna().all()]
+    if not present:
+        return
+    heat_plot = _ratio_heatmap(heat.loc[present], msar_df)
+    if heat_plot is None:
+        return
+
+    fig, ax = plt.subplots(figsize=(6, max(3, len(present) * 0.55 + 1)))
+    im = ax.imshow(heat_plot.values.astype(float), aspect="auto",
+                   cmap="RdYlGn_r", vmin=VMIN_RATIO, vmax=VMAX_RATIO)
+    ax.set_xticks(range(len(order_cols)))
+    ax.set_xticklabels([f"p_max={c}" for c in order_cols], fontsize=9)
+    ax.set_yticks(range(len(present)))
+    ax.set_yticklabels(present, fontsize=8)
+    plt.colorbar(im, ax=ax, label="RMSE / MSAR RMSE (green ≈ MSAR, red ≥ 2× MSAR)")
+    ax.set_title("Exp B2: Per-dataset RMSE heatmap\n(ratio to MSAR per dataset)")
+    plt.tight_layout()
+    save(fig, out_dir / "exp_b2_heatmap.png")
 
 
 # ================================================================
@@ -436,7 +475,7 @@ def main():
     exp_map = {
         "A":  ("results_density_exp_a.csv",  plot_experiment_a,  False),
         "B1": ("results_density_exp_b1.csv", plot_experiment_b1, True),
-        "B2": ("results_density_exp_b2.csv", plot_experiment_b2, False),
+        "B2": ("results_density_exp_b2.csv", plot_experiment_b2, True),
         "B3": ("results_density_exp_b3.csv", plot_experiment_b3, False),
         "C":  ("results_density_exp_c.csv",  plot_experiment_c,  True),
         "D":  ("results_density_exp_d.csv",  plot_experiment_d,  True),

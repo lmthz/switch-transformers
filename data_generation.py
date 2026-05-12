@@ -495,6 +495,24 @@ class MSSwitchGenerator:
                               X=X_sin, burn_in=burn,
                               save_name=f"G1_exogenous_only{suffix}", plot=True)
 
+        # ---------------- H3: HighOrder AR(p=4) ----------------
+        # First 4 coefficients of H1's decay pattern — directly comparable
+        ar4_r1 = np.array([0.45, -0.30, 0.20, -0.12])
+        ar4_r2 = np.array([0.60, -0.40, 0.22, -0.14])
+        regH3a = RegimeARMA(ar=ar4_r1, ma=None, sigma=0.30, name="p4_r1")
+        regH3b = RegimeARMA(ar=ar4_r2, ma=None, sigma=0.30, name="p4_r2")
+        self.simulate_ar([regH3a, regH3b], T_base, n=n, burn_in=burn,
+                         save_name=f"H3_ar4_coeffs{suffix}", plot=True)
+
+        # ---------------- H4: HighOrder AR(p=6) ----------------
+        # First 6 coefficients of H1's decay pattern — directly comparable
+        ar6_r1 = np.array([0.45, -0.30, 0.20, -0.12, 0.08, -0.06])
+        ar6_r2 = np.array([0.60, -0.40, 0.22, -0.14, 0.10, -0.08])
+        regH4a = RegimeARMA(ar=ar6_r1, ma=None, sigma=0.30, name="p6_r1")
+        regH4b = RegimeARMA(ar=ar6_r2, ma=None, sigma=0.30, name="p6_r2")
+        self.simulate_ar([regH4a, regH4b], T_base, n=n, burn_in=burn,
+                         save_name=f"H4_ar6_coeffs{suffix}", plot=True)
+
         # ---------------- H1: HighOrder AR(p=10) ----------------
         ar10_r1 = np.array([0.45, -0.3, 0.2, -0.12, 0.08, -0.06, 0.05, -0.04, 0.03, -0.02])
         ar10_r2 = np.array([0.60, -0.40, 0.22, -0.14, 0.10, -0.08, 0.06, -0.05, 0.04, -0.03])

@@ -76,6 +76,8 @@ DATASETS: List[str] = [
     "F1_seasonal_sarimax",
     "F2_seasonal_exog",
     "G1_exogenous_only",
+    "H3_ar4_coeffs",
+    "H4_ar6_coeffs",
     "H1_ar10_coeffs",
     "H2_ar1_near_unit_root",
     "S1_sparse_switching",
