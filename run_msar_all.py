@@ -207,7 +207,16 @@ def main():
                 print(f"  r0: [FAILED] {e}")
 
         if selected_order is None:
-            print(f"  skipping r1+ (no order selected for {ds})")
+            print(f"  r0 failed entirely — writing NaN row so {ds} is not retried")
+            new_rows.append({
+                "dataset": ds, "msar_order": float("nan"),
+                "msar_train_rmse": float("nan"), "msar_val_rmse": float("nan"),
+                "msar_val_rmse_std": float("nan"), "msar_n_instances": 0,
+                "msar_regime_acc": float("nan"), "noise_rmse": float("nan"),
+                "oracle_model_rmse": float("nan"),
+            })
+            all_rows = existing_rows + new_rows
+            pd.DataFrame(all_rows).to_csv(out_path, index=False)
             continue
 
         # ── Step 2: fixed order on r1..r(n-1) ────────────────────────
