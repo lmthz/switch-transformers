@@ -25,8 +25,8 @@ if [ ! -f "msar_results.csv" ]; then
     exit 1
 fi
 N_FOUND=$(ls generated_data/*_r*.npz 2>/dev/null | wc -l)
-if [ "$N_FOUND" -lt 630 ]; then
-    echo "[error] Only $N_FOUND dataset files found (need 630). Run: sbatch scripts/generate_data.sbatch"
+if [ "$N_FOUND" -lt 690 ]; then
+    echo "[error] Only $N_FOUND dataset files found (need 690). Run: sbatch scripts/generate_data.sbatch"
     exit 1
 fi
 
@@ -72,10 +72,8 @@ fi
 echo ""
 
 echo "=== Running density experiments ==="
-# Default: run A B3 D E only (B1 B2 C already have good results)
-# To run all: change --experiments line to: --experiments A B1 B2 B3 C D E
 python run_density_experiment.py \
-    --experiments A B3 D E \
+    --experiments A B1 B2 B3 C D E \
     --pool_path "$POOL" \
     --msar_csv msar_results.csv \
     --n_instances 3 \
