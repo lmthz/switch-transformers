@@ -120,32 +120,6 @@ def save(fig, path: Path):
 
 
 # ================================================================
-# EXPERIMENT A — OOD RMSE vs log(M)
-# ================================================================
-
-def plot_experiment_a(df: pd.DataFrame, out_dir: Path):
-    print("Plotting Experiment A...")
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-
-    ax.plot(df["M"], df["ood_rmse"],
-            "o-", color=TR_COLOR, label="Transformer (OOD RMSE)", lw=2)
-    ax.axhline(df["noise_floor"].iloc[0], color=NOISE_COLOR,
-               linestyle="--", lw=1.5, label=f"Noise floor σ={df['noise_floor'].iloc[0]:.2f}")
-    if "ridge_rmse" in df.columns:
-        ax.plot(df["M"], df["ridge_rmse"],
-                "s--", color=RIDGE_COLOR, label="Ridge regression (approx)", lw=1.5)
-
-    ax.set_xscale("log", base=2)
-    ax.set_xlabel("M — number of distinct training tasks (log scale)")
-    ax.set_ylabel("OOD RMSE")
-    ax.set_title("Exp A: Linear regression task diversity\n(Raventós et al. 2023 replication)")
-    ax.legend()
-    ax.xaxis.set_major_formatter(
-        ticker.FuncFormatter(lambda x, _: f"2$^{{{int(np.log2(x))}}}$" if x > 0 else ""))
-    save(fig, out_dir / "exp_a_ood_rmse_vs_M.png")
-
-
-# ================================================================
 # EXPERIMENT B1 — Family coverage grouped bars + heatmap
 # ================================================================
 
@@ -456,8 +430,8 @@ def plot_experiment_e(df: pd.DataFrame, out_dir: Path,
 def main():
     ap = argparse.ArgumentParser(description="Plot density experiment results.")
     ap.add_argument("--experiments", nargs="+",
-                    default=["A","B1","B2","B3","C","D","E"],
-                    choices=["A","B1","B2","B3","C","D","E"])
+                    default=["B1","B2","B3","C","D","E"],
+                    choices=["B1","B2","B3","C","D","E"])
     ap.add_argument("--results_dir", type=str, default=".",
                     help="Directory containing results_density_exp_*.csv files.")
     ap.add_argument("--msar_csv",    type=str, default="msar_results.csv")
@@ -473,7 +447,6 @@ def main():
         print(f"[warning] {args.msar_csv} not found — MSAR reference lines will be omitted")
 
     exp_map = {
-        "A":  ("results_density_exp_a.csv",  plot_experiment_a,  False),
         "B1": ("results_density_exp_b1.csv", plot_experiment_b1, True),
         "B2": ("results_density_exp_b2.csv", plot_experiment_b2, True),
         "B3": ("results_density_exp_b3.csv", plot_experiment_b3, False),

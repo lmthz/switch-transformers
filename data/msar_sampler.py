@@ -56,6 +56,7 @@ class MSARSamplerConfig:
     mix_exog_const:     float = 0.08
     mix_exog_sine:      float = 0.08
     mix_exog_seasonal:  float = 0.07
+    force_no_switch:    bool  = False
     ar_order_lo: int = 1
     ar_order_hi: int = 10
     ma_order_lo: int = 1
@@ -128,6 +129,12 @@ def _sample_markov_chains_batch(rng, k, persistence_lo, persistence_hi, B, n):
     return states
 
 
+def _force_no_switch_states(rng, B, total, k):
+    """Each series stays in a single randomly-chosen regime for all time steps."""
+    regime = rng.integers(0, k, size=B)
+    return np.broadcast_to(regime[:, None], (B, total)).copy()
+
+
 def _scale_noise(rng, B, total, sigmas, states):
     """eps[b,t] ~ N(0, sigma[b, regime_t]^2). Returns (B, total)."""
     raw = rng.standard_normal((B, total))
@@ -151,7 +158,8 @@ def _simulate_ar_batch(rng, cfg, B):
     p = int(rng.integers(cfg.ar_order_lo, cfg.ar_order_hi + 1))
     ar     = _sample_ar_coeffs_batch(rng, B, k, p, cfg.ar_coeff_scale)
     sigmas = rng.uniform(cfg.sigma_lo, cfg.sigma_hi, size=(B, k))
-    states = _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total)
+    states = (_force_no_switch_states(rng, B, total, k) if cfg.force_no_switch
+              else _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total))
     eps    = _scale_noise(rng, B, total, sigmas, states)
     bi     = np.arange(B)
     y      = np.zeros((B, total))
@@ -166,7 +174,8 @@ def _simulate_ar_near_unit_batch(rng, cfg, B):
     k, total = cfg.k_regimes, cfg.series_len + cfg.burn_in
     phis   = rng.uniform(0.85, 0.995, size=(B, k))
     sigmas = rng.uniform(cfg.sigma_lo, cfg.sigma_hi * 0.5, size=(B, k))
-    states = _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total)
+    states = (_force_no_switch_states(rng, B, total, k) if cfg.force_no_switch
+              else _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total))
     eps    = _scale_noise(rng, B, total, sigmas, states)
     bi     = np.arange(B)
     y      = np.zeros((B, total))
@@ -181,7 +190,8 @@ def _simulate_ar_no_switch_batch(rng, cfg, B):
     p      = int(rng.integers(1, 4))
     ar     = _sample_ar_coeffs_batch(rng, B, k, p, cfg.ar_coeff_scale)
     sigmas = rng.uniform(cfg.sigma_lo, cfg.sigma_hi, size=(B, k))
-    sub    = rng.integers(0, 3, size=B)
+    # When force_no_switch, exclude case 2 (mid-series switch) so all series are truly single-regime
+    sub    = rng.integers(0, 2 if cfg.force_no_switch else 3, size=B)
     states = np.zeros((B, total), dtype=int)
     for b in range(B):
         if sub[b] == 1:
@@ -206,7 +216,8 @@ def _simulate_arma_batch(rng, cfg, B):
     ar     = _sample_ar_coeffs_batch(rng, B, k, p, cfg.ar_coeff_scale)
     ma     = rng.uniform(-cfg.ma_coeff_scale, cfg.ma_coeff_scale, size=(B, k, q))
     sigmas = rng.uniform(cfg.sigma_lo, cfg.sigma_hi, size=(B, k))
-    states = _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total)
+    states = (_force_no_switch_states(rng, B, total, k) if cfg.force_no_switch
+              else _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total))
     eps    = _scale_noise(rng, B, total, sigmas, states)
     bi     = np.arange(B)
     y      = np.zeros((B, total))
@@ -226,7 +237,8 @@ def _simulate_arima_batch(rng, cfg, B, d):
     ar     = _sample_ar_coeffs_batch(rng, B, k, p, cfg.ar_coeff_scale)
     ma     = rng.uniform(-cfg.ma_coeff_scale, cfg.ma_coeff_scale, size=(B, k, q)) if q > 0 else None
     sigmas = rng.uniform(cfg.sigma_lo * 0.3, cfg.sigma_hi * 0.3, size=(B, k))
-    states = _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total)
+    states = (_force_no_switch_states(rng, B, total, k) if cfg.force_no_switch
+              else _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total))
     eps    = _scale_noise(rng, B, total, sigmas, states)
     bi     = np.arange(B)
     z      = np.zeros((B, total))
@@ -253,7 +265,8 @@ def _simulate_seasonal_batch(rng, cfg, B):
     sar = rng.uniform(-cfg.sar_coeff_scale, cfg.sar_coeff_scale, size=(B, k))  # P=1
     sma = rng.uniform(-cfg.sar_coeff_scale, cfg.sar_coeff_scale, size=(B, k))  # Q=1
     sigmas = rng.uniform(cfg.sigma_lo, cfg.sigma_hi, size=(B, k))
-    states = _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total)
+    states = (_force_no_switch_states(rng, B, total, k) if cfg.force_no_switch
+              else _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total))
     eps    = _scale_noise(rng, B, total, sigmas, states)
     bi     = np.arange(B)
     z      = np.zeros((B, total))
@@ -291,7 +304,8 @@ def _simulate_exog_const_batch(rng, cfg, B):
             X[b] = (t_a >= split).astype(float)
             mag = rng.uniform(0.01, 0.04)
             betas[b, 0] = mag; betas[b, 1] = -mag
-    states = _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total)
+    states = (_force_no_switch_states(rng, B, total, k) if cfg.force_no_switch
+              else _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total))
     eps    = _scale_noise(rng, B, total, sigmas, states)
     bi     = np.arange(B)
     y      = np.zeros((B, total))
@@ -315,7 +329,8 @@ def _simulate_exog_sine_batch(rng, cfg, B):
     X       = np.sin(2 * np.pi * t_a[None, :] / periods[:, None] + phases[:, None])
     betas   = np.stack([rng.uniform(0.4, cfg.exog_beta_hi, size=B),
                         rng.uniform(0.0, 0.1, size=B)], axis=1)  # (B, 2)
-    states = _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total)
+    states = (_force_no_switch_states(rng, B, total, k) if cfg.force_no_switch
+              else _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total))
     eps    = _scale_noise(rng, B, total, sigmas, states)
     bi     = np.arange(B)
     y      = np.zeros((B, total))
@@ -342,7 +357,8 @@ def _simulate_exog_seasonal_batch(rng, cfg, B):
     betas = np.zeros((B, k, 2))
     betas[:, 0, 0] = rng.uniform(0.2, 0.6, size=B)  # regime 0: sin
     betas[:, 1, 1] = rng.uniform(0.2, 0.6, size=B)  # regime 1: cos
-    states = _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total)
+    states = (_force_no_switch_states(rng, B, total, k) if cfg.force_no_switch
+              else _sample_markov_chains_batch(rng, k, cfg.persistence_lo, cfg.persistence_hi, B, total))
     eps    = _scale_noise(rng, B, total, sigmas, states)
     bi     = np.arange(B)
     y      = np.zeros((B, total))

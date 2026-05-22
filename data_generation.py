@@ -178,10 +178,11 @@ class MSSwitchGenerator:
         burn_in: int,
         save_name: str,
         plot: bool = True,
+        init_state: Optional[int] = None,
     ):
         """Simulate ARMA(p,q) Markov-switching process."""
         p, q = self._check_ar_ma_orders(regimes)
-        states = self._sample_markov_chain(T, n + burn_in)
+        states = self._sample_markov_chain(T, n + burn_in, init=init_state)
         y = np.zeros(n + burn_in)
         eps = np.zeros(n + burn_in)
         start = max(p, q)
@@ -217,10 +218,11 @@ class MSSwitchGenerator:
         return {"y": y, "states": states, "T": T}
 
     def simulate_arima(self, regimes: List[RegimeARMA], T: Array,
-                       n: int, d: int, burn_in: int, save_name: str, plot: bool = True):
+                       n: int, d: int, burn_in: int, save_name: str, plot: bool = True,
+                       init_state: Optional[int] = None):
         """Simulate ARIMA(p,d,q) by differencing/integrating ARMA innovations."""
         p, q = self._check_ar_ma_orders(regimes)
-        states = self._sample_markov_chain(T, n + burn_in)
+        states = self._sample_markov_chain(T, n + burn_in, init=init_state)
         z = np.zeros(n + burn_in)
         eps = np.zeros(n + burn_in)
         start = max(p, q)
@@ -271,9 +273,10 @@ class MSSwitchGenerator:
         burn_in: int,
         save_name: str,
         plot: bool = True,
+        init_state: Optional[int] = None,
     ):
         """Simulate SARIMAX with optional exogenous regressors."""
-        states = self._sample_markov_chain(T, n + burn_in)
+        states = self._sample_markov_chain(T, n + burn_in, init=init_state)
         y = np.zeros(n + burn_in)
         eps = np.zeros(n + burn_in)
         start = max(p, q, s * P if P > 0 else 0, s * Q if Q > 0 else 0)
@@ -555,6 +558,156 @@ class MSSwitchGenerator:
         )
 
         print(f"\n[menu] All datasets (suffix={suffix}) saved to {self.save_dir.resolve()}\n")
+
+    def make_noswitch_datasets_menu(self, n: int = 1000, burn: int = 600,
+                                    suffix: str = "_r0", init_state: int = 0):
+        """
+        Generate single-regime (no switching) versions of the main dataset suite.
+
+        Every dataset uses T_no_switch so the Markov chain stays in init_state
+        throughout. Structural datasets (S1, S2, SW1) are omitted since they are
+        only meaningful in a switching context.
+
+        init_state: 0 or 1 — which regime each series is fixed in.
+        Alternate between 0 and 1 across instances for balanced coverage.
+        """
+        print(f"\n[noswitch menu] init_state={init_state}  suffix={suffix}\n")
+
+        T_ns = np.array([[1.0, 0.0],
+                         [0.0, 1.0]])
+
+        # A1
+        regA1 = RegimeARMA(ar=np.array([0.6, -0.2]),  ma=None, sigma=0.30, name="calm")
+        regA2 = RegimeARMA(ar=np.array([1.2, -0.6]),  ma=None, sigma=0.30, name="volatile")
+        self.simulate_ar([regA1, regA2], T_ns, n=n, burn_in=burn,
+                         save_name=f"A1_ar2_coeffs_easy{suffix}", plot=True, init_state=init_state)
+
+        # A2
+        regA3 = RegimeARMA(ar=np.array([0.75, -0.25]), ma=None, sigma=0.30, name="r1")
+        regA4 = RegimeARMA(ar=np.array([0.85, -0.30]), ma=None, sigma=0.30, name="r2")
+        self.simulate_ar([regA3, regA4], T_ns, n=n, burn_in=burn,
+                         save_name=f"A2_ar2_coeffs_hard{suffix}", plot=True, init_state=init_state)
+
+        # A3
+        regA5 = RegimeARMA(ar=np.array([0.65, -0.15]), ma=None, sigma=0.20, name="low")
+        regA6 = RegimeARMA(ar=np.array([1.05, -0.55]), ma=None, sigma=0.60, name="high")
+        self.simulate_ar([regA5, regA6], T_ns, n=n, burn_in=burn,
+                         save_name=f"A3_ar2_coeffs_plus_var{suffix}", plot=True, init_state=init_state)
+
+        # B1
+        regB1 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.20, name="lowvar")
+        regB2 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.60, name="highvar")
+        self.simulate_ar([regB1, regB2], T_ns, n=n, burn_in=burn,
+                         save_name=f"B1_ar2_variance{suffix}", plot=True, init_state=init_state)
+
+        # B2
+        regB3 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.10, name="verylow")
+        regB4 = RegimeARMA(ar=np.array([0.8, -0.3]), ma=None, sigma=0.80, name="veryhigh")
+        self.simulate_ar([regB3, regB4], T_ns, n=n, burn_in=burn,
+                         save_name=f"B2_ar2_variance_big{suffix}", plot=True, init_state=init_state)
+
+        # C1
+        regC1 = RegimeARMA(ar=np.array([0.6, -0.2]), ma=np.array([0.3]), sigma=0.25, name="c1")
+        regC2 = RegimeARMA(ar=np.array([1.2, -0.6]), ma=np.array([0.2]), sigma=0.55, name="c2")
+        self.simulate_arma([regC1, regC2], T_ns, n=n, burn_in=burn,
+                           save_name=f"C1_arma21_coeffs_var{suffix}", plot=True, init_state=init_state)
+
+        # D1
+        self.simulate_arima([regC1, regC2], T_ns, n=n, d=1, burn_in=burn,
+                            save_name=f"D1_arima211{suffix}", plot=True, init_state=init_state)
+
+        # D3
+        regD3_1 = RegimeARMA(ar=np.array([0.6, -0.2]), ma=None, sigma=0.30, name="ar_int_r1")
+        regD3_2 = RegimeARMA(ar=np.array([1.0, -0.5]), ma=None, sigma=0.30, name="ar_int_r2")
+        self.simulate_arima([regD3_1, regD3_2], T_ns, n=n, d=1, burn_in=burn,
+                            save_name=f"D3_arima210{suffix}", plot=True, init_state=init_state)
+
+        # E1
+        regE1 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.30, beta=np.array([0.00]), name="flat")
+        regE2 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.30, beta=np.array([0.50]), name="uptrend")
+        X_ramp = np.arange(n + burn).astype(float) / (n + burn - 1)
+        self.simulate_sarimax([regE1, regE2], T_ns, n=n,
+                              p=0, d=0, q=0, P=0, D=0, Q=0, s=1,
+                              X=X_ramp, burn_in=burn,
+                              save_name=f"E1_drift_only{suffix}", plot=True, init_state=init_state)
+
+        # E2
+        regE3 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.30, beta=np.array([0.0]), name="zero")
+        regE4 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.30, beta=np.array([0.5]), name="shift")
+        X_const = np.ones(n + burn)
+        self.simulate_sarimax([regE3, regE4], T_ns, n=n,
+                              p=0, d=0, q=0, P=0, D=0, Q=0, s=1,
+                              X=X_const, burn_in=burn,
+                              save_name=f"E2_level_shift{suffix}", plot=True, init_state=init_state)
+
+        # F1
+        s = 24
+        regF1 = RegimeARMA(ar=np.array([0.6, -0.2]), ma=np.array([0.3]), sigma=0.25,
+                           sar=np.array([0.3]), sma=np.array([0.2]), name="seasonal_soft")
+        regF2 = RegimeARMA(ar=np.array([0.6, -0.2]), ma=np.array([0.3]), sigma=0.25,
+                           sar=np.array([0.1]), sma=np.array([0.4]), name="seasonal_strong")
+        self.simulate_sarimax([regF1, regF2], T_ns, n=n,
+                              p=2, d=0, q=1, P=1, D=1, Q=1, s=s,
+                              X=None, burn_in=burn,
+                              save_name=f"F1_seasonal_sarimax{suffix}", plot=True, init_state=init_state)
+
+        # F2
+        t_full = np.arange(n + burn)
+        X_trig = np.stack(
+            [np.sin(2 * np.pi * t_full / s), np.cos(2 * np.pi * t_full / s)], axis=1)
+        regF3 = RegimeARMA(ar=np.array([0.7, -0.25]), ma=np.array([0.2]), sigma=0.20,
+                           sar=np.array([0.2]), sma=np.array([0.2]),
+                           beta=np.array([0.5, 0.0]), name="sin-dominant")
+        regF4 = RegimeARMA(ar=np.array([0.7, -0.25]), ma=np.array([0.2]), sigma=0.20,
+                           sar=np.array([0.2]), sma=np.array([0.2]),
+                           beta=np.array([0.0, 0.5]), name="cos-dominant")
+        self.simulate_sarimax([regF3, regF4], T_ns, n=n,
+                              p=2, d=0, q=1, P=1, D=1, Q=1, s=s,
+                              X=X_trig, burn_in=burn,
+                              save_name=f"F2_seasonal_exog{suffix}", plot=True, init_state=init_state)
+
+        # G1
+        X_sin = np.sin(2 * np.pi * t_full / s)
+        regG1 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.25,
+                           beta=np.array([0.0]), name="no-exog")
+        regG2 = RegimeARMA(ar=np.array([]), ma=None, sigma=0.25,
+                           beta=np.array([0.8]), name="exog-on")
+        self.simulate_sarimax([regG1, regG2], T_ns, n=n,
+                              p=0, d=0, q=0, P=0, D=0, Q=0, s=1,
+                              X=X_sin, burn_in=burn,
+                              save_name=f"G1_exogenous_only{suffix}", plot=True, init_state=init_state)
+
+        # H3
+        ar4_r1 = np.array([0.45, -0.30, 0.20, -0.12])
+        ar4_r2 = np.array([0.60, -0.40, 0.22, -0.14])
+        regH3a = RegimeARMA(ar=ar4_r1, ma=None, sigma=0.30, name="p4_r1")
+        regH3b = RegimeARMA(ar=ar4_r2, ma=None, sigma=0.30, name="p4_r2")
+        self.simulate_ar([regH3a, regH3b], T_ns, n=n, burn_in=burn,
+                         save_name=f"H3_ar4_coeffs{suffix}", plot=True, init_state=init_state)
+
+        # H4
+        ar6_r1 = np.array([0.45, -0.30, 0.20, -0.12, 0.08, -0.06])
+        ar6_r2 = np.array([0.60, -0.40, 0.22, -0.14, 0.10, -0.08])
+        regH4a = RegimeARMA(ar=ar6_r1, ma=None, sigma=0.30, name="p6_r1")
+        regH4b = RegimeARMA(ar=ar6_r2, ma=None, sigma=0.30, name="p6_r2")
+        self.simulate_ar([regH4a, regH4b], T_ns, n=n, burn_in=burn,
+                         save_name=f"H4_ar6_coeffs{suffix}", plot=True, init_state=init_state)
+
+        # H1
+        ar10_r1 = np.array([0.45, -0.3, 0.2, -0.12, 0.08, -0.06, 0.05, -0.04, 0.03, -0.02])
+        ar10_r2 = np.array([0.60, -0.40, 0.22, -0.14, 0.10, -0.08, 0.06, -0.05, 0.04, -0.03])
+        regH1 = RegimeARMA(ar=ar10_r1, ma=None, sigma=0.30, name="p10_r1")
+        regH2 = RegimeARMA(ar=ar10_r2, ma=None, sigma=0.30, name="p10_r2")
+        self.simulate_ar([regH1, regH2], T_ns, n=n, burn_in=burn,
+                         save_name=f"H1_ar10_coeffs{suffix}", plot=True, init_state=init_state)
+
+        # H2
+        regH3x = RegimeARMA(ar=np.array([0.98]), ma=None, sigma=0.20, name="unitish")
+        regH4x = RegimeARMA(ar=np.array([0.90]), ma=None, sigma=0.20, name="less-persistent")
+        self.simulate_ar([regH3x, regH4x], T_ns, n=n, burn_in=burn,
+                         save_name=f"H2_ar1_near_unit_root{suffix}", plot=True, init_state=init_state)
+
+        print(f"\n[noswitch menu] Done (init_state={init_state}, suffix={suffix})\n")
 
 
 # ---------------- driver ----------------

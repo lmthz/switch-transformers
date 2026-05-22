@@ -49,6 +49,7 @@ def generate_pool(
     family_preset: str = "full",
     ar_order_lo: int = 2,
     ar_order_hi: int = 2,
+    force_no_switch: bool = False,
 ) -> None:
     # Derive a unique seed from all parameters that affect series content.
     # Fix for B3 pool bug: previously all pools used seed=42 regardless of
@@ -94,6 +95,7 @@ def generate_pool(
         persistence_hi=0.98,
         ar_order_lo=ar_order_lo,
         ar_order_hi=ar_order_hi,
+        force_no_switch=force_no_switch,
         **weights,
     )
     sampler = MSARBatchSampler(cfg, seed=effective_seed)
@@ -190,6 +192,8 @@ def main():
                     help="Min AR order (default 2).")
     ap.add_argument("--ar_order_hi", type=int, default=2,
                     help="Max AR order (default 2).")
+    ap.add_argument("--no_switch", action="store_true",
+                    help="Generate single-regime (no switching) series.")
     args = ap.parse_args()
 
     generate_pool(
@@ -203,6 +207,7 @@ def main():
         family_preset=args.family_preset,
         ar_order_lo=args.ar_order_lo,
         ar_order_hi=args.ar_order_hi,
+        force_no_switch=args.no_switch,
     )
 
 

@@ -73,11 +73,10 @@ echo ""
 
 echo "=== Running density experiments ==="
 python run_density_experiment.py \
-    --experiments A B1 B2 B3 C D E \
+    --experiments B1 B2 B3 C D E \
     --pool_path "$POOL" \
     --msar_csv msar_results.csv \
     --n_instances 3 \
-    --exp_a_steps 50000 \
     --exp_b_steps 10000 \
     $B1_ARGS \
     $B2_ARGS \
@@ -87,7 +86,6 @@ python run_density_experiment.py \
 echo ""
 echo "=== Complete ==="
 echo "Results:"
-echo "  results_density_exp_a.csv   (linear regression)"
 echo "  results_density_exp_b1.csv  (process family coverage)"
 echo "  results_density_exp_b2.csv  (AR order coverage)"
 echo "  results_density_exp_b3.csv  (coefficient magnitude)"
