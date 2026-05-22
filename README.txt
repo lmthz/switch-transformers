@@ -107,26 +107,37 @@ wandb sync wandb/offline-run-<id>
 # DATA DENSITY EXPERIMENTS
 # ================================================================
 
-# Two axes: model class coverage (B1/B2/B3) and task diversity (A/C/D/E)
-#
-#   A:  Linear regression (Raventós replication, sanity check)
+# Experiments:
 #   B1: Process family coverage (AR only → full mixture)
 #   B2: AR order coverage (p_max = 2/4/6/10)
 #   B3: Coefficient magnitude sweep (ar_coeff_scale 0.1–1.2)
 #   C:  Training steps sweep (50–100k steps, fixed pool)
 #   D:  Pool size sweep (M = 128–524k, each series seen once)
 #   E:  Pool size x family preset (ar_only vs full, same M range as D)
+#   F:  No-switch training steps sweep (single-regime ablation)
 #
 # Prerequisites: msar_results.csv and generated_data/ must exist.
 #
 # B1/B2/B3 use on-the-fly generation — no pool needed.
 # C uses the main pre-generated pool (series_pool.npz).
-# D/E use per-M pools; pre-generate them first:
+# D/E use per-M pools; pre-generate them first.
+
+# Step 1 — generate main pool + per-M pools for D/E:
 sbatch scripts/generate_density_pools.sbatch
 squeue -u <kerb>   # wait until done
 
-# Then run the density experiments:
+# Step 2 — run all experiments (B1 B2 B3 C D E) in one job:
 sbatch scripts/run_density.sbatch
+
+# Or run a single experiment to avoid wall-time limits:
+sbatch --export=ALL,EXPS="C"  scripts/run_density.sbatch
+sbatch --export=ALL,EXPS="D"  scripts/run_density.sbatch
+sbatch --export=ALL,EXPS="E"  scripts/run_density.sbatch
+sbatch --export=ALL,EXPS="B1" scripts/run_density.sbatch
+sbatch --export=ALL,EXPS="B2" scripts/run_density.sbatch
+sbatch --export=ALL,EXPS="B3" scripts/run_density.sbatch
+# Multiple experiments in one job:
+sbatch --export=ALL,EXPS="B1 B2 B3" scripts/run_density.sbatch
 
 # Track progress:
 squeue -u <kerb>
@@ -139,6 +150,31 @@ wandb sync wandb/offline-run-<id>
 
 # Download results:
 scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_density_*.csv' ~/Downloads/
+
+
+# ================================================================
+# EXPERIMENT F — NO-SWITCH ABLATION
+# ================================================================
+
+# Runs the same training-steps sweep as Experiment C, but with
+# single-regime (no switching) training data and evaluation datasets.
+# Establishes a baseline: how does performance scale without switching?
+#
+# Two jobs: data generation (CPU) then experiment (GPU).
+
+# Step 1 — generate no-switch datasets and pool (CPU node, ~2h):
+sbatch scripts/generate_noswitch.sbatch
+squeue -u <kerb>   # wait until done
+
+# Step 2 — run Experiment F (GPU node, ~4h):
+sbatch scripts/run_noswitch.sbatch
+
+# Track progress:
+tail -f logs/sw_noswitch_gen_<jobid>.out
+tail -f logs/sw_noswitch_<jobid>.out
+
+# Download results:
+scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_density_exp_f.csv' ~/Downloads/
 
 
 # ================================================================
@@ -171,7 +207,6 @@ scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/msar_results.csv' ~/Downloa
 #   summary             mean RMSE, mean gap vs MSAR, n datasets beating MSAR
 #
 # What is logged (run_density):
-#   exp_a/M, exp_a/ood_rmse         linear regression results per M
 #   exp_b1/<preset>/...             per-family-preset results
 #   exp_b2/<order>/...              per-order-config results
 #   exp_b3/scale_<x>/...            per-coefficient-scale results

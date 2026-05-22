@@ -71,9 +71,12 @@ else
 fi
 echo ""
 
-echo "=== Running density experiments ==="
+# Accept EXPS env variable to run specific experiments, e.g.:
+#   sbatch --export=ALL,EXPS="C" scripts/run_density.sbatch
+EXPERIMENTS="${EXPS:-B1 B2 B3 C D E}"
+echo "=== Running density experiments: $EXPERIMENTS ==="
 python run_density_experiment.py \
-    --experiments B1 B2 B3 C D E \
+    --experiments $EXPERIMENTS \
     --pool_path "$POOL" \
     --msar_csv msar_results.csv \
     --n_instances 3 \

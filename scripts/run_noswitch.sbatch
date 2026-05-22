@@ -19,38 +19,27 @@ echo "=== Environment ==="
 python -c "import torch; print('cuda:', torch.cuda.is_available(), '| devices:', torch.cuda.device_count())"
 echo ""
 
-# ── Step 1: Generate no-switch evaluation datasets ──────────────────────────
+# Prerequisites check
 N_NS=$(ls generated_data_noswitch/*_r*.npz 2>/dev/null | wc -l)
-EXPECTED_NS=510   # 17 datasets × 30 instances
-if [ "$N_NS" -lt "$EXPECTED_NS" ]; then
-    echo "=== Generating no-switch datasets ($N_NS / $EXPECTED_NS found) ==="
-    python generate_noswitch_data.py --n_instances 30 --n 1000 --burn 600
-else
-    echo "=== No-switch datasets already present ($N_NS files) ==="
+if [ "$N_NS" -lt 510 ]; then
+    echo "[error] Only $N_NS no-switch dataset files found (need 510)."
+    echo "Run first: sbatch scripts/generate_noswitch.sbatch"
+    exit 1
 fi
+if [ ! -f "pool_noswitch.npz" ]; then
+    echo "[error] pool_noswitch.npz not found."
+    echo "Run first: sbatch scripts/generate_noswitch.sbatch"
+    exit 1
+fi
+
+echo "=== Prerequisites OK ($N_NS no-switch dataset files) ==="
 echo ""
 
-# ── Step 2: Generate no-switch training pool ────────────────────────────────
-POOL_NS=pool_noswitch.npz
-if [ ! -f "$POOL_NS" ]; then
-    echo "=== Generating no-switch training pool ==="
-    python generate_pool.py \
-        --no_switch \
-        --n_series 524288 \
-        --ar_coeff_scale 1.2 \
-        --family_preset full \
-        --out "$POOL_NS"
-else
-    echo "=== No-switch pool already present: $POOL_NS ==="
-fi
-echo ""
-
-# ── Step 3: Run Experiment F ─────────────────────────────────────────────────
 echo "=== Running Experiment F (no-switch training steps sweep) ==="
 python run_density_experiment.py \
     --experiments F \
     --data_dir_noswitch generated_data_noswitch \
-    --pool_noswitch "$POOL_NS" \
+    --pool_noswitch pool_noswitch.npz \
     --n_instances 3 \
     --exp_b_steps 10000
 
@@ -58,3 +47,4 @@ echo ""
 echo "=== Complete ==="
 echo "Results:"
 echo "  results_density_exp_f.csv  (no-switch training steps sweep)"
+echo "W&B: ls wandb/ then: wandb sync wandb/offline-run-<id>"
