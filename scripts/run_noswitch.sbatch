@@ -20,7 +20,7 @@ python -c "import torch; print('cuda:', torch.cuda.is_available(), '| devices:',
 echo ""
 
 # Prerequisites check
-N_NS=$(ls generated_data_noswitch/*_r*.npz 2>/dev/null | wc -l)
+N_NS=$(find generated_data_noswitch/ -name "*_r*.npz" 2>/dev/null | wc -l)
 if [ "$N_NS" -lt 510 ]; then
     echo "[error] Only $N_NS no-switch dataset files found (need 510)."
     echo "Run first: sbatch scripts/generate_noswitch.sbatch"

@@ -16,7 +16,8 @@ source /home/lizthorn/miniforge3/etc/profile.d/conda.sh
 conda activate switchgpu
 
 echo "=== Step 1: No-switch evaluation datasets ==="
-N_NS=$(ls generated_data_noswitch/*_r*.npz 2>/dev/null | wc -l)
+mkdir -p generated_data_noswitch
+N_NS=$(find generated_data_noswitch/ -name "*_r*.npz" | wc -l)
 EXPECTED_NS=510   # 17 datasets × 30 instances
 if [ "$N_NS" -lt "$EXPECTED_NS" ]; then
     echo "Generating ($N_NS / $EXPECTED_NS found)..."
