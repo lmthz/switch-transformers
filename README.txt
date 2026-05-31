@@ -160,13 +160,17 @@ scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_density_*.csv' ~/Do
 # but with single-regime (no switching) training data and evaluation datasets.
 # Establishes a baseline: how do all coverage axes scale without switching?
 #
-# Two jobs: data generation then experiment.
+# Three jobs: eval data, pools, then experiments.
 
-# Step 1 — generate no-switch datasets and pool (~2h):
+# Step 1 — generate no-switch eval datasets (510 files) + pool_noswitch.npz (~2h):
 sbatch scripts/generate_noswitch.sbatch
 squeue -u <kerb>   # wait until done
 
-# Step 2 — run full no-switch suite (GPU node, ~6h):
+# Step 2 — pre-generate no-switch training pools for B1/B2/B3/D/E (~6h):
+sbatch scripts/generate_noswitch_pools.sbatch
+squeue -u <kerb>   # wait until done
+
+# Step 3 — run full no-switch suite (GPU node, ~6h):
 sbatch scripts/run_density_noswitch.sbatch
 
 # Or run a single experiment:
@@ -175,6 +179,7 @@ sbatch --export=ALL,EXPS="B1 B2 B3" scripts/run_density_noswitch.sbatch
 
 # Track progress:
 tail -f logs/sw_noswitch_gen_<jobid>.out
+tail -f logs/sw_pools_ns_<jobid>.out
 tail -f logs/sw_density_ns_<jobid>.out
 
 # Download results:

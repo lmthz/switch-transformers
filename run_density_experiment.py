@@ -393,7 +393,7 @@ def run_experiment_b1(
         np.random.seed(seed)
 
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
-        pool_for_preset = None if noswitch else (b1_pools or {}).get(preset_name, None)
+        pool_for_preset = (b1_pools or {}).get(preset_name, None)
         sampler = build_sampler(
             ar_coeff_scale=1.2, seed=seed,
             ar_order_lo=2, ar_order_hi=2,
@@ -471,7 +471,7 @@ def run_experiment_b2(
         np.random.seed(seed)
 
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
-        pool_for_order = None if noswitch else (b2_pools or {}).get(name, None)
+        pool_for_order = (b2_pools or {}).get(name, None)
         sampler = build_sampler(
             ar_coeff_scale=1.2,
             ar_order_lo=lo, ar_order_hi=hi,
@@ -548,7 +548,7 @@ def run_experiment_b3(
         np.random.seed(seed)
 
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
-        pool_for_scale = None if noswitch else (b3_pools or {}).get(str(scale), None)
+        pool_for_scale = (b3_pools or {}).get(str(scale), None)
         # XOR seed with scale so each condition gets a genuinely different RNG stream.
         # Without this, on-the-fly generation produces series that are rescaled
         # versions of each other and look identical after standardisation.
@@ -725,7 +725,7 @@ def run_experiment_d(
 
         model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
         pool_path_d = None
-        if not noswitch and pool_dir is not None:
+        if pool_dir is not None:
             candidate = Path(pool_dir) / f"pool_d_full_{M}.npz"
             if candidate.exists():
                 pool_path_d = str(candidate)
@@ -839,15 +839,14 @@ def run_experiment_e(
 
             model   = build_model(context_len, 256, 4, 6, 0.1, seed, device)
             pool_path_e = None
-            if not noswitch:
-                if preset_name == "full" and pool_dir_full is not None:
-                    candidate = Path(pool_dir_full) / f"pool_d_full_{M}.npz"
-                    if candidate.exists():
-                        pool_path_e = str(candidate)
-                elif preset_name == "ar_only" and pool_dir_ar_only is not None:
-                    candidate = Path(pool_dir_ar_only) / f"pool_e_ar_only_{M}.npz"
-                    if candidate.exists():
-                        pool_path_e = str(candidate)
+            if preset_name == "full" and pool_dir_full is not None:
+                candidate = Path(pool_dir_full) / f"pool_d_full_{M}.npz"
+                if candidate.exists():
+                    pool_path_e = str(candidate)
+            elif preset_name == "ar_only" and pool_dir_ar_only is not None:
+                candidate = Path(pool_dir_ar_only) / f"pool_e_ar_only_{M}.npz"
+                if candidate.exists():
+                    pool_path_e = str(candidate)
             order_hi = 2  # hold order fixed at AR(2) for all E conditions
             sampler = build_sampler(
                 ar_coeff_scale=1.2, seed=seed,
@@ -1094,7 +1093,7 @@ def main():
             data_dir=data_dir, device=device, msar_df=msar_df,
             n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
-            pool_dir=None if ns else args.pool_d_dir,
+            pool_dir=args.pool_d_dir,
             noswitch=ns,
         )
         fname = f"results_density_exp_d{suffix}.csv"
@@ -1106,8 +1105,8 @@ def main():
             data_dir=data_dir, device=device, msar_df=msar_df,
             n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
-            pool_dir_full=None if ns else (args.pool_e_dir_full or args.pool_d_dir),
-            pool_dir_ar_only=None if ns else args.pool_e_dir_ar_only,
+            pool_dir_full=args.pool_e_dir_full or args.pool_d_dir,
+            pool_dir_ar_only=args.pool_e_dir_ar_only,
             noswitch=ns,
         )
         fname = f"results_density_exp_e{suffix}.csv"
