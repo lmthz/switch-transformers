@@ -1,5 +1,5 @@
 #!/bin/bash -l
-#SBATCH -J sw_noswitch
+#SBATCH -J sw_density_ns
 #SBATCH -p mit_normal_gpu
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
@@ -35,9 +35,13 @@ fi
 echo "=== Prerequisites OK ($N_NS no-switch dataset files) ==="
 echo ""
 
-echo "=== Running Experiment F (no-switch training steps sweep) ==="
+# Accept EXPS env variable to run specific experiments, e.g.:
+#   sbatch --export=ALL,EXPS="C" scripts/run_density_noswitch.sbatch
+EXPERIMENTS="${EXPS:-B1 B2 B3 C D E}"
+echo "=== Running no-switch density experiments: $EXPERIMENTS ==="
 python run_density_experiment.py \
-    --experiments F \
+    --noswitch \
+    --experiments $EXPERIMENTS \
     --data_dir_noswitch generated_data_noswitch \
     --pool_noswitch pool_noswitch.npz \
     --n_instances 3 \
@@ -46,5 +50,10 @@ python run_density_experiment.py \
 echo ""
 echo "=== Complete ==="
 echo "Results:"
-echo "  results_density_exp_f.csv  (no-switch training steps sweep)"
+echo "  results_density_exp_b1_ns.csv  (process family coverage, no-switch)"
+echo "  results_density_exp_b2_ns.csv  (AR order coverage, no-switch)"
+echo "  results_density_exp_b3_ns.csv  (coefficient magnitude, no-switch)"
+echo "  results_density_exp_c_ns.csv   (training steps sweep, no-switch)"
+echo "  results_density_exp_d_ns.csv   (task diversity sweep, no-switch)"
+echo "  results_density_exp_e_ns.csv   (task diversity x model class, no-switch)"
 echo "W&B: ls wandb/ then: wandb sync wandb/offline-run-<id>"

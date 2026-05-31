@@ -153,28 +153,32 @@ scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_density_*.csv' ~/Do
 
 
 # ================================================================
-# EXPERIMENT F — NO-SWITCH ABLATION
+# NO-SWITCH ABLATION — full suite (B1 B2 B3 C D E)
 # ================================================================
 
-# Runs the same training-steps sweep as Experiment C, but with
-# single-regime (no switching) training data and evaluation datasets.
-# Establishes a baseline: how does performance scale without switching?
+# Runs the same B1/B2/B3/C/D/E experiments as the main density suite,
+# but with single-regime (no switching) training data and evaluation datasets.
+# Establishes a baseline: how do all coverage axes scale without switching?
 #
-# Two jobs: data generation (CPU) then experiment (GPU).
+# Two jobs: data generation then experiment.
 
-# Step 1 — generate no-switch datasets and pool (CPU node, ~2h):
+# Step 1 — generate no-switch datasets and pool (~2h):
 sbatch scripts/generate_noswitch.sbatch
 squeue -u <kerb>   # wait until done
 
-# Step 2 — run Experiment F (GPU node, ~4h):
-sbatch scripts/run_noswitch.sbatch
+# Step 2 — run full no-switch suite (GPU node, ~6h):
+sbatch scripts/run_density_noswitch.sbatch
+
+# Or run a single experiment:
+sbatch --export=ALL,EXPS="C" scripts/run_density_noswitch.sbatch
+sbatch --export=ALL,EXPS="B1 B2 B3" scripts/run_density_noswitch.sbatch
 
 # Track progress:
 tail -f logs/sw_noswitch_gen_<jobid>.out
-tail -f logs/sw_noswitch_<jobid>.out
+tail -f logs/sw_density_ns_<jobid>.out
 
 # Download results:
-scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_density_exp_f.csv' ~/Downloads/
+scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_density_exp_*_ns.csv' ~/Downloads/
 
 
 # ================================================================
@@ -182,6 +186,7 @@ scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_density_exp_f.csv' 
 # ================================================================
 
 scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_*.csv' ~/Downloads/
+scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/results_density_exp_*_ns.csv' ~/Downloads/
 scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/training_samples.png' ~/Downloads/
 scp '<kerb>@orcd-login.mit.edu:~/switch-transformers/msar_results.csv' ~/Downloads/
 
