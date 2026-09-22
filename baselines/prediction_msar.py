@@ -14,6 +14,9 @@ from metrics import (
     per_regime_rmse,
     label_corrected_accuracy,
     train_val_split_indices,
+    near_switch_mask,
+    post_switch_spike_ratio,
+    recovery_time,
 )
 
 
@@ -488,23 +491,46 @@ def evaluate_msar_fixed_order(
     # per regime rmse using true states
     states_ok = true_states[idx]
     per_reg_train = per_regime_rmse(err_train, states_ok[train_mask], cfg.k_regimes)
-    per_reg_val = per_regime_rmse(err_val, states_ok[val_mask], cfg.k_regimes)
+    per_reg_val   = per_regime_rmse(err_val,   states_ok[val_mask],   cfg.k_regimes)
+
+    # ── Extended switch-aware metrics (val region) ────────────────
+    val_states  = states_ok[val_mask]
+    val_sq_err  = err_val ** 2
+    val_decoded = decoded_full[idx][val_mask]
+    valid_dec   = val_decoded >= 0  # statsmodels pads initial steps with -1
+
+    def _acc(pred, true):
+        if pred.sum() < 5:
+            return float("nan")
+        return float(label_corrected_accuracy(pred.astype(int), true, k_regimes=2)["acc_no_swap"])
+
+    ns_mask     = near_switch_mask(val_states, window=20)
+    regime_acc_val        = _acc(val_decoded[valid_dec],                          val_states[valid_dec])
+    regime_acc_val_near   = _acc(val_decoded[valid_dec & ns_mask],                val_states[valid_dec & ns_mask])
+    regime_acc_val_steady = _acc(val_decoded[valid_dec & ~ns_mask],               val_states[valid_dec & ~ns_mask])
 
     return {
-        "dataset": dataset_name,
-        "order": int(cfg.order),
-        "train_rmse": float(train_rmse),
-        "val_rmse": float(val_rmse),
-        "train_mse": float(train_mse),
-        "val_mse": float(val_mse),
-        "regime_accuracy": float(acc),
-        "per_regime_rmse_train": per_reg_train,
-        "per_regime_rmse_val": per_reg_val,
-        "noise_rmse": float(noise_rmse),
-        "oracle_model_rmse": oracle_model_rmse,
-        "n": int(n),
-        "n_train": int(n_train),
-        "n_val": int(n_val),
+        "dataset":                dataset_name,
+        "order":                  int(cfg.order),
+        "train_rmse":             float(train_rmse),
+        "val_rmse":               float(val_rmse),
+        "train_mse":              float(train_mse),
+        "val_mse":                float(val_mse),
+        "regime_accuracy":        float(acc),
+        "per_regime_rmse_train":  per_reg_train,
+        "per_regime_rmse_val":    per_reg_val,
+        "rmse_r0_val":            next((r["rmse"] for r in per_reg_val if r["regime"] == 0), float("nan")),
+        "rmse_r1_val":            next((r["rmse"] for r in per_reg_val if r["regime"] == 1), float("nan")),
+        "spike_ratio":            post_switch_spike_ratio(val_sq_err, val_states),
+        "recovery_time":          recovery_time(val_sq_err, val_states),
+        "regime_acc_val":         regime_acc_val,
+        "regime_acc_val_near":    regime_acc_val_near,
+        "regime_acc_val_steady":  regime_acc_val_steady,
+        "noise_rmse":             float(noise_rmse),
+        "oracle_model_rmse":      oracle_model_rmse,
+        "n":                      int(n),
+        "n_train":                int(n_train),
+        "n_val":                  int(n_val),
     }
 
 

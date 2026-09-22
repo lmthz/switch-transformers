@@ -61,6 +61,13 @@ from train_transformer import train_iid, eval_loop, resolve_device
 from train_transformer import MSARBatchSampler, MSARSamplerConfig
 from models.transformer_forecaster import TransformerConfig, CausalTransformerForecaster
 from data.synthetic_npz_dataset import make_train_val_datasets
+from metrics import (
+    per_regime_rmse,
+    post_switch_spike_ratio, recovery_time,
+    regime_id_accuracy_from_errors,
+    regime_id_accuracy_near_switch,
+    regime_id_accuracy_steady_state,
+)
 
 
 # ── Dataset list ─────────────────────────────────────────────────
@@ -255,6 +262,111 @@ def eval_suite(
     return results
 
 
+def eval_series_extended(
+    model, npz_path: str, context_len: int, val_frac: float,
+    batch_size: int, device,
+) -> Dict[str, float]:
+    """
+    Evaluate model on one .npz file in temporal order.
+    Returns flat dict with rmse, per-regime rmse, and switch-aware metrics.
+    Returns {} if the val split is empty.
+    """
+    _, ds_val, _, _ = make_train_val_datasets(npz_path, context_len, val_frac)
+    if len(ds_val) == 0:
+        return {}
+    loader = DataLoader(ds_val, batch_size=batch_size, shuffle=False)
+    errs_list, states_list = [], []
+    model.eval()
+    with torch.no_grad():
+        for x, y, s in loader:
+            x = x.to(device)
+            y = y.to(device)
+            e = (y - model.predict_next(x)).detach().cpu().numpy().reshape(-1)
+            errs_list.append(e)
+            states_list.append(s.numpy().reshape(-1))
+    errs   = np.concatenate(errs_list)
+    states = np.concatenate(states_list)
+    sq_err = errs ** 2
+    per_r  = per_regime_rmse(errs, states, k_regimes=2)
+    return {
+        "rmse":               float(np.sqrt(np.mean(sq_err))),
+        "rmse_r0":            next((r["rmse"] for r in per_r if r["regime"] == 0), float("nan")),
+        "rmse_r1":            next((r["rmse"] for r in per_r if r["regime"] == 1), float("nan")),
+        "spike_ratio":        post_switch_spike_ratio(sq_err, states),
+        "recovery_time":      recovery_time(sq_err, states),
+        "regime_acc":         regime_id_accuracy_from_errors(sq_err, states),
+        "regime_acc_near":    regime_id_accuracy_near_switch(sq_err, states),
+        "regime_acc_steady":  regime_id_accuracy_steady_state(sq_err, states),
+    }
+
+
+def eval_suite_extended(
+    model, data_dir, datasets, n_instances,
+    context_len, val_frac, batch_size, device,
+) -> Dict[str, float]:
+    """
+    Like eval_suite but also computes switch-aware extended metrics.
+    Per-dataset RMSE keys are identical to eval_suite for backward compatibility.
+    Adds per-dataset _spike / _recovery / _regime_acc* keys plus group means.
+    """
+    def _nanmean(lst):
+        v = [x for x in lst if np.isfinite(x)]
+        return float(np.mean(v)) if v else float("nan")
+
+    results = {}
+    ext: Dict[str, Dict[str, list]] = {
+        ds: {"spike": [], "recov": [], "acc": [], "acc_near": [], "acc_steady": []}
+        for ds in datasets
+    }
+
+    model.eval()
+    for ds in datasets:
+        rmse_vals = []
+        for i in range(n_instances):
+            npz = Path(data_dir) / f"{ds}_r{i}.npz"
+            if not npz.exists():
+                continue
+            row = eval_series_extended(model, str(npz), context_len, val_frac, batch_size, device)
+            if not row:
+                continue
+            rmse_vals.append(row["rmse"])
+            ext[ds]["spike"].append(row["spike_ratio"])
+            ext[ds]["recov"].append(row["recovery_time"])
+            ext[ds]["acc"].append(row["regime_acc"])
+            ext[ds]["acc_near"].append(row["regime_acc_near"])
+            ext[ds]["acc_steady"].append(row["regime_acc_steady"])
+        if rmse_vals:
+            results[ds] = float(np.mean(rmse_vals))
+            results[f"{ds}_spike"]          = _nanmean(ext[ds]["spike"])
+            results[f"{ds}_recovery"]       = _nanmean(ext[ds]["recov"])
+            results[f"{ds}_regime_acc"]     = _nanmean(ext[ds]["acc"])
+            results[f"{ds}_regime_acc_near"]   = _nanmean(ext[ds]["acc_near"])
+            results[f"{ds}_regime_acc_steady"] = _nanmean(ext[ds]["acc_steady"])
+    model.train()
+
+    def _group_mean(group):
+        vals = [results[d] for d in group if d in results]
+        return float(np.mean(vals)) if vals else float("nan")
+
+    def _group_nanmean(key_suffix, group):
+        vals = [results[f"{d}{key_suffix}"] for d in group
+                if f"{d}{key_suffix}" in results
+                and np.isfinite(results[f"{d}{key_suffix}"])]
+        return float(np.mean(vals)) if vals else float("nan")
+
+    results["mean_all"]               = _group_mean(DATASETS)
+    results["mean_ar"]                = _group_mean(AR_DATASETS)
+    results["mean_arima"]             = _group_mean(ARIMA_DATASETS)
+    results["mean_seasonal"]          = _group_mean(SEASONAL_DATASETS)
+    results["mean_exog"]              = _group_mean(EXOG_DATASETS)
+    results["mean_spike_ratio"]       = _group_nanmean("_spike",          datasets)
+    results["mean_recovery_time"]     = _group_nanmean("_recovery",       datasets)
+    results["mean_regime_acc"]        = _group_nanmean("_regime_acc",     datasets)
+    results["mean_regime_acc_near"]   = _group_nanmean("_regime_acc_near",   datasets)
+    results["mean_regime_acc_steady"] = _group_nanmean("_regime_acc_steady", datasets)
+    return results
+
+
 def train_and_eval(
     model, sampler, val_loader_monitor,
     steps, batch_size, lr, device,
@@ -268,7 +380,7 @@ def train_and_eval(
     train_iid(model, sampler, val_loader_monitor, steps, batch_size, lr, device,
               wandb_run=wandb_run if wandb_prefix else None)
 
-    results = eval_suite(
+    results = eval_suite_extended(
         model, data_dir, datasets, n_instances,
         context_len, val_frac, batch_size, device,
     )

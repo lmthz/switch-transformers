@@ -199,6 +199,13 @@ def main():
                     "regime_accuracy": r0_result["regime_accuracy"],
                     "noise_rmse": r0_result["noise_rmse"],
                     "oracle_model_rmse": r0_result["oracle_model_rmse"],
+                    "spike_ratio":            r0_result.get("spike_ratio",            float("nan")),
+                    "recovery_time":          r0_result.get("recovery_time",          float("nan")),
+                    "regime_acc_val":         r0_result.get("regime_acc_val",         float("nan")),
+                    "regime_acc_val_near":    r0_result.get("regime_acc_val_near",    float("nan")),
+                    "regime_acc_val_steady":  r0_result.get("regime_acc_val_steady",  float("nan")),
+                    "rmse_r0_val":            r0_result.get("rmse_r0_val",            float("nan")),
+                    "rmse_r1_val":            r0_result.get("rmse_r1_val",            float("nan")),
                 }
                 inst_rows.append(inst_row)
                 inst_done[(ds, 0)] = inst_row
@@ -247,6 +254,13 @@ def main():
                     "regime_accuracy": float("nan"),
                     "noise_rmse": float("nan"),
                     "oracle_model_rmse": float("nan"),
+                    "spike_ratio":            ri_result.get("spike_ratio",            float("nan")),
+                    "recovery_time":          ri_result.get("recovery_time",          float("nan")),
+                    "regime_acc_val":         ri_result.get("regime_acc_val",         float("nan")),
+                    "regime_acc_val_near":    ri_result.get("regime_acc_val_near",    float("nan")),
+                    "regime_acc_val_steady":  ri_result.get("regime_acc_val_steady",  float("nan")),
+                    "rmse_r0_val":            ri_result.get("rmse_r0_val",            float("nan")),
+                    "rmse_r1_val":            ri_result.get("rmse_r1_val",            float("nan")),
                 }
                 inst_rows.append(inst_row)
                 inst_done[(ds, ri)] = inst_row
@@ -270,16 +284,28 @@ def main():
             print(f"  note: {n_ran - n_ok}/{n_ran} instances returned NaN (filtered out)")
         print(f"  mean val_rmse={val_mean:.4f} ± {val_std:.4f}  ({n_ok}/{args.n_instances} valid)")
 
+        def _inst_nanmean(key):
+            vals = [r.get(key, float("nan")) for r in ds_instances
+                    if np.isfinite(r.get(key, float("nan")))]
+            return float(np.mean(vals)) if vals else float("nan")
+
         new_rows.append({
-            "dataset":           ds,
-            "msar_order":        selected_order,
-            "msar_train_rmse":   tr_mean,
-            "msar_val_rmse":     val_mean,
-            "msar_val_rmse_std": val_std,
-            "msar_n_instances":  n_ok,
-            "msar_regime_acc":   r0_result["regime_accuracy"] if r0_result else float("nan"),
-            "noise_rmse":        r0_result["noise_rmse"] if r0_result else float("nan"),
-            "oracle_model_rmse": r0_result["oracle_model_rmse"] if r0_result else float("nan"),
+            "dataset":                ds,
+            "msar_order":             selected_order,
+            "msar_train_rmse":        tr_mean,
+            "msar_val_rmse":          val_mean,
+            "msar_val_rmse_std":      val_std,
+            "msar_n_instances":       n_ok,
+            "msar_regime_acc":        r0_result["regime_accuracy"] if r0_result else float("nan"),
+            "noise_rmse":             r0_result["noise_rmse"] if r0_result else float("nan"),
+            "oracle_model_rmse":      r0_result["oracle_model_rmse"] if r0_result else float("nan"),
+            "spike_ratio":            _inst_nanmean("spike_ratio"),
+            "recovery_time":          _inst_nanmean("recovery_time"),
+            "regime_acc_val":         _inst_nanmean("regime_acc_val"),
+            "regime_acc_val_near":    _inst_nanmean("regime_acc_val_near"),
+            "regime_acc_val_steady":  _inst_nanmean("regime_acc_val_steady"),
+            "rmse_r0_val":            _inst_nanmean("rmse_r0_val"),
+            "rmse_r1_val":            _inst_nanmean("rmse_r1_val"),
         })
 
         # ── Write dataset-level CSV once all instances are done ───────
