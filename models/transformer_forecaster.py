@@ -79,10 +79,12 @@ class CausalTransformerForecaster(nn.Module):
                         At inference use output[:, -1, :] for the forecast.
         """
         B, L, _ = x.shape
-        if L != self.cfg.context_len:
-            raise ValueError(f"expected L={self.cfg.context_len}, got {L}")
+        if L > self.cfg.context_len:
+            raise ValueError(
+                f"eval context_len {L} exceeds training context_len {self.cfg.context_len}"
+            )
 
-        h = self.in_proj(x) + self.pos_emb[:, :L, :]
+        h = self.in_proj(x) + self.pos_emb[:, -L:, :]
         h = self.decoder(h, mask=self._causal_mask(L, x.device))
         return self.out_proj(h)   # (B, L, 1)
 

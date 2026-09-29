@@ -1012,13 +1012,93 @@ def run_experiment_e(
     print(df[available].to_string(index=False))
     return df
 
+# ================================================================
+# EXPERIMENT G — Context window length sweep
+# ================================================================
+
+def run_experiment_g(
+    data_dir, device, msar_df,
+    pool_path, n_instances=3, seed=0, wandb_run=None,
+    eval_context_lens=(8, 16, 24, 32, 48, 64),
+    train_steps=10_000,
+) -> pd.DataFrame:
+    """
+    Train one model (full-family, context_len=64, 10k steps) then evaluate it
+    at each of several shorter context window lengths without retraining.
+
+    The model's learned positional embeddings are sliced from the right so that
+    position 63 (the predict-next slot) stays aligned regardless of eval length.
+    """
+    tag = "G"
+    print("\n" + "="*60)
+    print(f"EXPERIMENT {tag}: Context window length sweep")
+    print(f"  train_steps={train_steps}  eval_context_lens={list(eval_context_lens)}")
+    print("="*60)
+
+    context_len = 64
+    batch_size  = 128
+    lr          = 3e-4
+    val_frac    = 0.3
+    datasets    = DATASETS_B1
+
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    val_loader = get_val_monitor_loader(data_dir, context_len, val_frac, batch_size, VAL_MONITOR_B1CDE)
+
+    model = build_model(context_len, 256, 4, 6, 0.1, seed, device)
+    sampler = build_sampler(
+        ar_coeff_scale=1.2, seed=seed,
+        ar_order_lo=2, ar_order_hi=2,
+        pool_path=pool_path,
+        family_weights=FAMILY_PRESETS["full"],
+        force_no_switch=False,
+    )
+
+    print(f"\nTraining for {train_steps} steps (full-family, context_len={context_len})...")
+    train_iid(model, sampler, val_loader, train_steps, batch_size, lr, device,
+              wandb_run=wandb_run)
+    print("Training complete.")
+
+    rows = []
+    for eval_len in eval_context_lens:
+        print(f"\n--- eval_context_len={eval_len} ---")
+        results = eval_suite_extended(
+            model, data_dir, datasets, n_instances,
+            eval_len, val_frac, batch_size, device,
+        )
+
+        if msar_df is not None:
+            gaps = [
+                results[ds] - float(msar_df.loc[ds, "msar_val_rmse"])
+                for ds in datasets
+                if ds in results and ds in msar_df.index
+                and not np.isnan(float(msar_df.loc[ds, "msar_val_rmse"]))
+            ]
+            results["mean_gap_vs_msar"] = float(np.mean(gaps)) if gaps else float("nan")
+
+        print(f"  mean_all={results['mean_all']:.4f}  "
+              f"mean_spike={results.get('mean_spike_ratio', float('nan')):.4f}  "
+              f"mean_regime_acc_near={results.get('mean_regime_acc_near', float('nan')):.4f}")
+
+        row = {"eval_context_len": eval_len, "train_steps": train_steps}
+        row.update({k: v for k, v in results.items() if isinstance(v, float)})
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    print(f"\nExperiment G summary:")
+    print(df[["eval_context_len", "mean_all", "mean_spike_ratio",
+              "mean_regime_acc_near", "mean_regime_acc_steady"]].to_string(index=False))
+    return df
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Data density experiments."
     )
     ap.add_argument(
         "--experiments", nargs="+", default=["B1", "B2", "B3", "C", "D", "E"],
-        choices=["B1", "B2", "B3", "C", "D", "E"],
+        choices=["B1", "B2", "B3", "C", "D", "E", "G"],
     )
     ap.add_argument("--data_dir",           type=str, default="generated_data")
     ap.add_argument("--noswitch",           action="store_true",
@@ -1224,6 +1304,20 @@ def main():
         fname = f"results_density_exp_e{suffix}.csv"
         df.to_csv(fname, index=False)
         saved.append(fname)
+
+    if "G" in args.experiments:
+        if args.pool_path is None:
+            print("[error] Experiment G requires --pool_path series_pool.npz")
+        else:
+            df = run_experiment_g(
+                data_dir=data_dir, device=device, msar_df=msar_df,
+                pool_path=args.pool_path,
+                n_instances=args.n_instances,
+                seed=args.seed, wandb_run=wandb_run,
+            )
+            fname = "results_density_exp_g.csv"
+            df.to_csv(fname, index=False)
+            saved.append(fname)
 
     if wandb_run is not None:
         wandb_run.finish()
