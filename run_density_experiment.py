@@ -851,7 +851,7 @@ def run_experiment_d(
 
         train_iid(model, sampler, val_loader, steps, batch_size, lr, device)
 
-        results = eval_suite(
+        results = eval_suite_extended(
             model, data_dir, datasets, n_instances,
             context_len, val_frac, batch_size, device,
         )
@@ -970,7 +970,7 @@ def run_experiment_e(
 
             train_iid(model, sampler, val_loader, steps, batch_size, lr, device)
 
-            results = eval_suite(
+            results = eval_suite_extended(
                 model, data_dir, datasets, n_instances,
                 context_len, val_frac, batch_size, device,
             )
