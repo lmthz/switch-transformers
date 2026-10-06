@@ -42,6 +42,9 @@ def main():
     ap.add_argument("--train_steps", type=int, default=10_000)
     ap.add_argument("--n_instances", type=int, default=3)
     ap.add_argument("--seed",        type=int, default=0)
+    ap.add_argument("--pool_path",   default=None,
+                    help="Path to pre-generated pool .npz (e.g. pool_b1_full.npz). "
+                         "If omitted, uses on-the-fly generation (slower).")
     ap.add_argument("--probe_csv",   default="results_probe.csv")
     ap.add_argument("--switch_csv",  default="results_per_switch.csv")
     args = ap.parse_args()
@@ -59,6 +62,7 @@ def main():
     sampler = build_sampler(
         ar_coeff_scale=1.2, seed=args.seed,
         family_weights=FAMILY_PRESETS["full"],
+        pool_path=args.pool_path,
     )
     val_loader = get_val_monitor_loader(
         args.data_dir, context_len, val_frac, batch_size,
