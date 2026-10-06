@@ -46,7 +46,7 @@ def main():
     ap.add_argument("--switch_csv",  default="results_per_switch.csv")
     args = ap.parse_args()
 
-    device     = resolve_device()
+    device     = resolve_device("cuda")
     context_len = 64
     batch_size  = 128
     val_frac    = 0.3
