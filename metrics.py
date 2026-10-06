@@ -164,3 +164,150 @@ def regime_id_accuracy_steady_state(sq_err: np.ndarray, states: np.ndarray,
         return float("nan")
     predicted = _regime_id_predicted(sq_err, rolling_window)
     return float(label_corrected_accuracy(predicted[mask], states[mask], k_regimes=2)["acc_no_swap"])
+
+
+# ── Linear probe for hidden-state regime identification ──────────────
+
+class LinearProbe:
+    """
+    Logistic regression probe: tests whether regime identity is linearly
+    decodable from transformer hidden states.
+    """
+
+    def __init__(self) -> None:
+        self._clf = None
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "LinearProbe":
+        """X: (N, d_model)  y: (N,) int binary"""
+        try:
+            from sklearn.linear_model import LogisticRegression
+            clf = LogisticRegression(max_iter=1000, C=1.0, solver="lbfgs")
+            clf.fit(X, y)
+            self._clf = clf
+        except ImportError:
+            # Fallback: least-squares binary classifier
+            X_bias = np.hstack([X, np.ones((len(X), 1))])
+            w, _, _, _ = np.linalg.lstsq(X_bias, y.astype(float), rcond=None)
+            self._clf = ("lstsq", w)
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """Returns (N,) int binary predictions."""
+        if self._clf is None:
+            raise RuntimeError("Call fit() before predict()")
+        if isinstance(self._clf, tuple):
+            w = self._clf[1]
+            X_bias = np.hstack([X, np.ones((len(X), 1))])
+            return (X_bias @ w >= 0.5).astype(int)
+        return self._clf.predict(X).astype(int)
+
+
+def regime_id_accuracy_from_probe(
+    hidden: np.ndarray, states: np.ndarray, probe: LinearProbe
+) -> float:
+    """Overall regime ID accuracy using a fitted linear probe on hidden states."""
+    states = np.asarray(states, dtype=int)
+    if len(np.unique(states)) < 2:
+        return float("nan")
+    predicted = probe.predict(hidden)
+    return float(label_corrected_accuracy(predicted, states, k_regimes=2)["acc_no_swap"])
+
+
+def regime_id_accuracy_near_switch_probe(
+    hidden: np.ndarray, states: np.ndarray, probe: LinearProbe, window: int = 20
+) -> float:
+    """Near-switch regime ID accuracy using a fitted linear probe."""
+    states = np.asarray(states, dtype=int)
+    if len(np.unique(states)) < 2:
+        return float("nan")
+    mask = near_switch_mask(states, window)
+    if mask.sum() < 5:
+        return float("nan")
+    predicted = probe.predict(hidden)
+    return float(label_corrected_accuracy(predicted[mask], states[mask], k_regimes=2)["acc_no_swap"])
+
+
+def regime_id_accuracy_steady_state_probe(
+    hidden: np.ndarray, states: np.ndarray, probe: LinearProbe, window: int = 20
+) -> float:
+    """Steady-state regime ID accuracy using a fitted linear probe."""
+    states = np.asarray(states, dtype=int)
+    if len(np.unique(states)) < 2:
+        return float("nan")
+    mask = ~near_switch_mask(states, window)
+    if mask.sum() < 5:
+        return float("nan")
+    predicted = probe.predict(hidden)
+    return float(label_corrected_accuracy(predicted[mask], states[mask], k_regimes=2)["acc_no_swap"])
+
+
+# ── Per-switch-in-context analysis ───────────────────────────────────
+
+def per_switch_metrics(
+    sq_err: np.ndarray,
+    states: np.ndarray,
+    context_len: int = 64,
+    spike_window: int = 10,
+    recovery_threshold: float = 1.5,
+    recovery_max: int = 50,
+) -> List[Dict[str, Any]]:
+    """
+    For each switch point, returns metrics broken down by how many prior
+    switches were visible in the model's context window at that moment.
+
+    switches_in_context counts prior switch points in [position-context_len, position).
+    This is the relevant quantity for a transformer with fixed context_len — switches
+    further back than context_len are invisible to the model.
+
+    Returns a list of dicts (one per switch), empty if no switches.
+    """
+    states = np.asarray(states, dtype=int)
+    sq_err = np.asarray(sq_err, dtype=float)
+    switch_pts = list(np.where(np.diff(states) != 0)[0] + 1)
+    if not switch_pts:
+        return []
+
+    n = len(sq_err)
+    global_mse = float(sq_err.mean()) if n > 0 else float("nan")
+
+    # Steady-state MSE: exclude 10 steps around each switch
+    near = np.zeros(n, dtype=bool)
+    for s in switch_pts:
+        near[max(0, s - 5):min(n, s + 10)] = True
+    steady_vals = sq_err[~near]
+    steady_mse = float(steady_vals.mean()) if len(steady_vals) > 0 else global_mse
+    threshold = recovery_threshold * steady_mse
+
+    results = []
+    for ordinal, s in enumerate(switch_pts):
+        # Count prior switches visible in context window
+        window_start = s - context_len
+        switches_in_context = sum(
+            1 for prev in switch_pts[:ordinal] if prev >= window_start
+        )
+
+        # Spike ratio
+        post = sq_err[s:min(s + spike_window, n)]
+        spike = float(post.mean() / global_mse) if global_mse > 0 and len(post) > 0 else float("nan")
+
+        # Post-switch MSE (raw)
+        post_mse = float(post.mean()) if len(post) > 0 else float("nan")
+
+        # Recovery time
+        t = 0
+        while t < recovery_max and s + t < n:
+            if sq_err[s + t] <= threshold:
+                break
+            t += 1
+        rec = float(t)
+
+        results.append({
+            "switch_ordinal":      ordinal,
+            "position":            int(s),
+            "switches_in_context": switches_in_context,
+            "spike_ratio":         spike,
+            "recovery_time":       rec,
+            "post_switch_mse":     post_mse,
+        })
+
+    return results

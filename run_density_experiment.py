@@ -67,6 +67,11 @@ from metrics import (
     regime_id_accuracy_from_errors,
     regime_id_accuracy_near_switch,
     regime_id_accuracy_steady_state,
+    LinearProbe,
+    regime_id_accuracy_from_probe,
+    regime_id_accuracy_near_switch_probe,
+    regime_id_accuracy_steady_state_probe,
+    per_switch_metrics,
 )
 
 
@@ -264,18 +269,23 @@ def eval_suite(
 
 def eval_series_extended(
     model, npz_path: str, context_len: int, val_frac: float,
-    batch_size: int, device,
+    batch_size: int, device, use_probe: bool = False,
 ) -> Dict[str, float]:
     """
     Evaluate model on one .npz file in temporal order.
     Returns flat dict with rmse, per-regime rmse, and switch-aware metrics.
     Returns {} if the val split is empty.
+
+    If use_probe=True, also fits a linear probe on the first half of the val
+    split's hidden states and evaluates regime ID accuracy on the second half.
+    Probe results are added as probe_acc, probe_acc_near, probe_acc_steady.
     """
     _, ds_val, _, _ = make_train_val_datasets(npz_path, context_len, val_frac)
     if len(ds_val) == 0:
         return {}
     loader = DataLoader(ds_val, batch_size=batch_size, shuffle=False)
     errs_list, states_list = [], []
+    hidden_list = [] if use_probe else None
     model.eval()
     with torch.no_grad():
         for x, y, s in loader:
@@ -284,11 +294,15 @@ def eval_series_extended(
             e = (y - model.predict_next(x)).detach().cpu().numpy().reshape(-1)
             errs_list.append(e)
             states_list.append(s.numpy().reshape(-1))
+            if use_probe:
+                h = model.get_hidden(x).detach().cpu().numpy()  # (B, d_model)
+                hidden_list.append(h)
     errs   = np.concatenate(errs_list)
     states = np.concatenate(states_list)
     sq_err = errs ** 2
     per_r  = per_regime_rmse(errs, states, k_regimes=2)
-    return {
+
+    out = {
         "rmse":               float(np.sqrt(np.mean(sq_err))),
         "rmse_r0":            next((r["rmse"] for r in per_r if r["regime"] == 0), float("nan")),
         "rmse_r1":            next((r["rmse"] for r in per_r if r["regime"] == 1), float("nan")),
@@ -299,15 +313,34 @@ def eval_series_extended(
         "regime_acc_steady":  regime_id_accuracy_steady_state(sq_err, states),
     }
 
+    if use_probe:
+        hidden = np.concatenate(hidden_list, axis=0)  # (N, d_model)
+        n = len(hidden)
+        split = n // 2
+        if split >= 10 and len(np.unique(states[:split])) >= 2:
+            probe = LinearProbe().fit(hidden[:split], states[:split])
+            out["probe_acc"]        = regime_id_accuracy_from_probe(hidden[split:], states[split:], probe)
+            out["probe_acc_near"]   = regime_id_accuracy_near_switch_probe(hidden[split:], states[split:], probe)
+            out["probe_acc_steady"] = regime_id_accuracy_steady_state_probe(hidden[split:], states[split:], probe)
+        else:
+            out["probe_acc"]        = float("nan")
+            out["probe_acc_near"]   = float("nan")
+            out["probe_acc_steady"] = float("nan")
+
+    return out
+
 
 def eval_suite_extended(
     model, data_dir, datasets, n_instances,
     context_len, val_frac, batch_size, device,
+    use_probe: bool = False,
 ) -> Dict[str, float]:
     """
     Like eval_suite but also computes switch-aware extended metrics.
     Per-dataset RMSE keys are identical to eval_suite for backward compatibility.
     Adds per-dataset _spike / _recovery / _regime_acc* keys plus group means.
+
+    If use_probe=True, also computes probe_acc* keys per dataset and group means.
     """
     def _nanmean(lst):
         v = [x for x in lst if np.isfinite(x)]
@@ -315,7 +348,10 @@ def eval_suite_extended(
 
     results = {}
     ext: Dict[str, Dict[str, list]] = {
-        ds: {"spike": [], "recov": [], "acc": [], "acc_near": [], "acc_steady": []}
+        ds: {
+            "spike": [], "recov": [], "acc": [], "acc_near": [], "acc_steady": [],
+            "probe_acc": [], "probe_acc_near": [], "probe_acc_steady": [],
+        }
         for ds in datasets
     }
 
@@ -326,7 +362,10 @@ def eval_suite_extended(
             npz = Path(data_dir) / f"{ds}_r{i}.npz"
             if not npz.exists():
                 continue
-            row = eval_series_extended(model, str(npz), context_len, val_frac, batch_size, device)
+            row = eval_series_extended(
+                model, str(npz), context_len, val_frac, batch_size, device,
+                use_probe=use_probe,
+            )
             if not row:
                 continue
             rmse_vals.append(row["rmse"])
@@ -335,13 +374,21 @@ def eval_suite_extended(
             ext[ds]["acc"].append(row["regime_acc"])
             ext[ds]["acc_near"].append(row["regime_acc_near"])
             ext[ds]["acc_steady"].append(row["regime_acc_steady"])
+            if use_probe:
+                ext[ds]["probe_acc"].append(row.get("probe_acc", float("nan")))
+                ext[ds]["probe_acc_near"].append(row.get("probe_acc_near", float("nan")))
+                ext[ds]["probe_acc_steady"].append(row.get("probe_acc_steady", float("nan")))
         if rmse_vals:
             results[ds] = float(np.mean(rmse_vals))
-            results[f"{ds}_spike"]          = _nanmean(ext[ds]["spike"])
-            results[f"{ds}_recovery"]       = _nanmean(ext[ds]["recov"])
-            results[f"{ds}_regime_acc"]     = _nanmean(ext[ds]["acc"])
+            results[f"{ds}_spike"]             = _nanmean(ext[ds]["spike"])
+            results[f"{ds}_recovery"]          = _nanmean(ext[ds]["recov"])
+            results[f"{ds}_regime_acc"]        = _nanmean(ext[ds]["acc"])
             results[f"{ds}_regime_acc_near"]   = _nanmean(ext[ds]["acc_near"])
             results[f"{ds}_regime_acc_steady"] = _nanmean(ext[ds]["acc_steady"])
+            if use_probe:
+                results[f"{ds}_probe_acc"]        = _nanmean(ext[ds]["probe_acc"])
+                results[f"{ds}_probe_acc_near"]   = _nanmean(ext[ds]["probe_acc_near"])
+                results[f"{ds}_probe_acc_steady"] = _nanmean(ext[ds]["probe_acc_steady"])
     model.train()
 
     def _group_mean(group):
@@ -364,7 +411,88 @@ def eval_suite_extended(
     results["mean_regime_acc"]        = _group_nanmean("_regime_acc",     datasets)
     results["mean_regime_acc_near"]   = _group_nanmean("_regime_acc_near",   datasets)
     results["mean_regime_acc_steady"] = _group_nanmean("_regime_acc_steady", datasets)
+    if use_probe:
+        results["mean_probe_acc"]        = _group_nanmean("_probe_acc",        datasets)
+        results["mean_probe_acc_near"]   = _group_nanmean("_probe_acc_near",   datasets)
+        results["mean_probe_acc_steady"] = _group_nanmean("_probe_acc_steady", datasets)
     return results
+
+
+def eval_series_per_switch(
+    model, npz_path: str, context_len: int, val_frac: float,
+    batch_size: int, device,
+    dataset_name: str = "", instance: int = 0,
+) -> List[Dict[str, Any]]:
+    """
+    Runs inference on the val split of one series and returns one dict per
+    switch event, containing per-switch metrics grouped by how many prior
+    switches were visible in the model's context window at that moment.
+
+    Key column: switches_in_context — prior switch points within
+    [position - context_len, position). This is the relevant in-context
+    switch exposure for a transformer with fixed context window.
+    """
+    _, ds_val, _, _ = make_train_val_datasets(npz_path, context_len, val_frac)
+    if len(ds_val) == 0:
+        return []
+    loader = DataLoader(ds_val, batch_size=batch_size, shuffle=False)
+    errs_list, states_list = [], []
+    model.eval()
+    with torch.no_grad():
+        for x, y, s in loader:
+            x = x.to(device)
+            y = y.to(device)
+            e = (y - model.predict_next(x)).detach().cpu().numpy().reshape(-1)
+            errs_list.append(e)
+            states_list.append(s.numpy().reshape(-1))
+    errs   = np.concatenate(errs_list)
+    states = np.concatenate(states_list)
+    sq_err = errs ** 2
+
+    rows = per_switch_metrics(sq_err, states, context_len=context_len)
+    for r in rows:
+        r["dataset"]  = dataset_name
+        r["instance"] = instance
+    return rows
+
+
+def eval_suite_per_switch(
+    model, data_dir, datasets, n_instances,
+    context_len, val_frac, batch_size, device,
+    out_csv: str = "results_per_switch.csv",
+) -> pd.DataFrame:
+    """
+    Calls eval_series_per_switch for all (dataset, instance) pairs and
+    returns a DataFrame with one row per switch event.
+
+    Key analysis after loading the CSV:
+        df.groupby('switches_in_context')[
+            ['spike_ratio', 'recovery_time', 'post_switch_mse']
+        ].mean()
+    shows whether having seen more prior switches in context correlates
+    with better post-switch handling.
+    """
+    all_rows: List[Dict[str, Any]] = []
+    model.eval()
+    for ds in datasets:
+        for i in range(n_instances):
+            npz = Path(data_dir) / f"{ds}_r{i}.npz"
+            if not npz.exists():
+                continue
+            rows = eval_series_per_switch(
+                model, str(npz), context_len, val_frac, batch_size, device,
+                dataset_name=ds, instance=i,
+            )
+            all_rows.extend(rows)
+    model.train()
+
+    df = pd.DataFrame(all_rows)
+    if len(df) > 0:
+        df.to_csv(out_csv, index=False)
+        print(f"Per-switch results saved to {out_csv}  ({len(df)} switch events)")
+    else:
+        print("No switch events found — check datasets contain switching series.")
+    return df
 
 
 def train_and_eval(

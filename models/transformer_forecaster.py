@@ -66,17 +66,17 @@ class CausalTransformerForecaster(nn.Module):
         """Upper-triangular mask: position i cannot attend to position j > i."""
         return torch.triu(torch.ones(L, L, device=device, dtype=torch.bool), diagonal=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_hidden: bool = False):
         """
         Full decoder forward pass.
 
         Args:
             x: (B, L, 1) — context window of L scalar observations
+            return_hidden: if True, return (predictions, h) where h is
+                           (B, L, d_model) — decoder output before out_proj.
 
         Returns:
-            (B, L, 1) — predicted next value at every position.
-                        During training all positions are supervised.
-                        At inference use output[:, -1, :] for the forecast.
+            (B, L, 1) by default; ((B, L, 1), (B, L, d_model)) if return_hidden.
         """
         B, L, _ = x.shape
         if L > self.cfg.context_len:
@@ -86,7 +86,15 @@ class CausalTransformerForecaster(nn.Module):
 
         h = self.in_proj(x) + self.pos_emb[:, -L:, :]
         h = self.decoder(h, mask=self._causal_mask(L, x.device))
-        return self.out_proj(h)   # (B, L, 1)
+        out = self.out_proj(h)   # (B, L, 1)
+        if return_hidden:
+            return out, h        # (B, L, 1), (B, L, d_model)
+        return out
+
+    def get_hidden(self, x: torch.Tensor) -> torch.Tensor:
+        """Returns final-position hidden state (B, d_model) for probing."""
+        _, h = self.forward(x, return_hidden=True)
+        return h[:, -1, :]
 
     def predict_next(self, x: torch.Tensor) -> torch.Tensor:
         """
