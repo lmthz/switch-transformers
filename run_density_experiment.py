@@ -501,6 +501,7 @@ def train_and_eval(
     data_dir, n_instances, context_len, val_frac,
     msar_df, datasets=None,
     wandb_run=None, wandb_prefix="",
+    use_probe: bool = False,
 ) -> Dict[str, Any]:
     if datasets is None:
         datasets = DATASETS
@@ -511,6 +512,7 @@ def train_and_eval(
     results = eval_suite_extended(
         model, data_dir, datasets, n_instances,
         context_len, val_frac, batch_size, device,
+        use_probe=use_probe,
     )
 
     if msar_df is not None:
@@ -598,6 +600,7 @@ def run_experiment_b1(
     steps=25000, n_instances=3, seed=0, wandb_run=None,
     b1_pools: dict = None,
     noswitch: bool = False,
+    use_probe: bool = False,
 ) -> pd.DataFrame:
     """
     Train on subsets of the 10 process families; test on all datasets.
@@ -647,6 +650,7 @@ def run_experiment_b1(
             data_dir, n_instances, context_len, val_frac, msar_df,
             datasets=datasets,
             wandb_run=wandb_run, wandb_prefix=f"{prefix}/{preset_name}",
+            use_probe=use_probe,
         )
 
         print(f"  mean_all={results['mean_all']:.4f}  "
@@ -676,6 +680,7 @@ def run_experiment_b2(
     steps=25000, n_instances=3, seed=0, wandb_run=None,
     b2_pools: dict = None,
     noswitch: bool = False,
+    use_probe: bool = False,
 ) -> pd.DataFrame:
     """
     Restrict training AR order; test on H1 (AR(10)) vs A1-A3 (AR(2)).
@@ -725,6 +730,7 @@ def run_experiment_b2(
             data_dir, n_instances, context_len, val_frac, msar_df,
             datasets=datasets,
             wandb_run=wandb_run, wandb_prefix=f"{prefix}/{name}",
+            use_probe=use_probe,
         )
 
         h1 = results.get("H1_ar10_coeffs", float("nan"))
@@ -757,6 +763,7 @@ def run_experiment_b3(
     steps=25000, n_instances=3, seed=0, wandb_run=None,
     b3_pools: dict = None,
     noswitch: bool = False,
+    use_probe: bool = False,
 ) -> pd.DataFrame:
     """
     Vary ar_coeff_scale within the AR family.
@@ -806,6 +813,7 @@ def run_experiment_b3(
             data_dir, n_instances, context_len, val_frac, msar_df,
             datasets=datasets,
             wandb_run=wandb_run, wandb_prefix=f"{prefix}/scale_{scale}",
+            use_probe=use_probe,
         )
 
         a1 = results.get("A1_ar2_coeffs_easy", float("nan"))
@@ -832,6 +840,7 @@ def run_experiment_c(
     data_dir, device, msar_df, pool_path,
     n_instances=3, seed=0, wandb_run=None,
     noswitch: bool = False,
+    use_probe: bool = False,
 ) -> pd.DataFrame:
     """
     Vary training steps from 500 to 100k.
@@ -887,6 +896,7 @@ def run_experiment_c(
             data_dir, n_instances, context_len, val_frac, msar_df,
             datasets=datasets,
             wandb_run=wandb_run, wandb_prefix=f"{prefix}/steps_{steps}",
+            use_probe=use_probe,
         )
 
         print(f"  mean_all={results['mean_all']:.4f}  mean_ar={results['mean_ar']:.4f}")
@@ -925,6 +935,7 @@ def run_experiment_d(
     wandb_run=None,
     pool_dir: str = None,
     noswitch: bool = False,
+    use_probe: bool = False,
 ) -> pd.DataFrame:
     """
     Vary number of distinct training series M while holding steps-per-series
@@ -982,6 +993,7 @@ def run_experiment_d(
         results = eval_suite_extended(
             model, data_dir, datasets, n_instances,
             context_len, val_frac, batch_size, device,
+            use_probe=use_probe,
         )
 
         if msar_df is not None:
@@ -1033,6 +1045,7 @@ def run_experiment_e(
     pool_dir_full: str = None,
     pool_dir_ar_only: str = None,
     noswitch: bool = False,
+    use_probe: bool = False,
 ) -> pd.DataFrame:
     """
     Run Experiment D (pool size sweep) separately for ar_only and full
@@ -1101,6 +1114,7 @@ def run_experiment_e(
             results = eval_suite_extended(
                 model, data_dir, datasets, n_instances,
                 context_len, val_frac, batch_size, device,
+                use_probe=use_probe,
             )
 
             if msar_df is not None:
@@ -1228,6 +1242,8 @@ def main():
         "--experiments", nargs="+", default=["B1", "B2", "B3", "C", "D", "E"],
         choices=["B1", "B2", "B3", "C", "D", "E", "G"],
     )
+    ap.add_argument("--use_probe", action="store_true",
+                    help="Fit hidden-state linear probe during eval and report probe_acc* columns.")
     ap.add_argument("--data_dir",           type=str, default="generated_data")
     ap.add_argument("--noswitch",           action="store_true",
                     help="Run all experiments with single-regime (no-switch) training and eval. "
@@ -1348,7 +1364,7 @@ def main():
             steps=args.exp_b_steps, n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
             b1_pools=b1_pools if b1_pools else None,
-            noswitch=ns,
+            noswitch=ns, use_probe=args.use_probe,
         )
         fname = f"results_density_exp_b1{suffix}.csv"
         df.to_csv(fname, index=False)
@@ -1366,7 +1382,7 @@ def main():
             steps=args.exp_b_steps, n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
             b2_pools=b2_pools if b2_pools else None,
-            noswitch=ns,
+            noswitch=ns, use_probe=args.use_probe,
         )
         fname = f"results_density_exp_b2{suffix}.csv"
         df.to_csv(fname, index=False)
@@ -1389,7 +1405,7 @@ def main():
             steps=args.exp_b_steps, n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
             b3_pools=b3_pools if b3_pools else None,
-            noswitch=ns,
+            noswitch=ns, use_probe=args.use_probe,
         )
         fname = f"results_density_exp_b3{suffix}.csv"
         df.to_csv(fname, index=False)
@@ -1402,7 +1418,7 @@ def main():
             pool_path=pool_c,
             n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
-            noswitch=ns,
+            noswitch=ns, use_probe=args.use_probe,
         )
         fname = f"results_density_exp_c{suffix}.csv"
         df.to_csv(fname, index=False)
@@ -1414,7 +1430,7 @@ def main():
             n_instances=args.n_instances,
             seed=args.seed, wandb_run=wandb_run,
             pool_dir=args.pool_d_dir,
-            noswitch=ns,
+            noswitch=ns, use_probe=args.use_probe,
         )
         fname = f"results_density_exp_d{suffix}.csv"
         df.to_csv(fname, index=False)
@@ -1427,7 +1443,7 @@ def main():
             seed=args.seed, wandb_run=wandb_run,
             pool_dir_full=args.pool_e_dir_full or args.pool_d_dir,
             pool_dir_ar_only=args.pool_e_dir_ar_only,
-            noswitch=ns,
+            noswitch=ns, use_probe=args.use_probe,
         )
         fname = f"results_density_exp_e{suffix}.csv"
         df.to_csv(fname, index=False)

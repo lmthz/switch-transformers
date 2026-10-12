@@ -81,6 +81,7 @@ python run_density_experiment.py \
     --msar_csv msar_results.csv \
     --n_instances 3 \
     --exp_b_steps 10000 \
+    --use_probe \
     $B1_ARGS \
     $B2_ARGS \
     $B3_ARGS \
