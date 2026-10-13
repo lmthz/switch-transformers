@@ -502,7 +502,7 @@ def evaluate_msar_fixed_order(
     def _acc(pred, true):
         if pred.sum() < 5:
             return float("nan")
-        return float(label_corrected_accuracy(pred.astype(int), true, k_regimes=2)["acc_no_swap"])
+        return float(label_corrected_accuracy(pred.astype(int), true, k_regimes=2)["acc"])
 
     ns_mask     = near_switch_mask(val_states, window=20)
     regime_acc_val        = _acc(val_decoded[valid_dec],                          val_states[valid_dec])
