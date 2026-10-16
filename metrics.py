@@ -250,6 +250,7 @@ def per_switch_metrics(
     spike_window: int = 10,
     recovery_threshold: float = 1.5,
     recovery_max: int = 50,
+    k_values: List[int] = None,
 ) -> List[Dict[str, Any]]:
     """
     For each switch point, returns metrics broken down by how many prior
@@ -261,6 +262,9 @@ def per_switch_metrics(
 
     Returns a list of dicts (one per switch), empty if no switches.
     """
+    if k_values is None:
+        k_values = [1, 5, 10, 20]
+
     states = np.asarray(states, dtype=int)
     sq_err = np.asarray(sq_err, dtype=float)
     switch_pts = list(np.where(np.diff(states) != 0)[0] + 1)
@@ -301,13 +305,106 @@ def per_switch_metrics(
             t += 1
         rec = float(t)
 
-        results.append({
+        # Per-k post-switch MSE: sq_err at exactly k steps after switch
+        k_mse = {}
+        for k in k_values:
+            idx = s + k - 1
+            k_mse[k] = float(sq_err[idx]) if idx < n else float("nan")
+
+        # Cumulative excess loss over recovery_max horizon
+        post_horizon = sq_err[s:min(s + recovery_max, n)]
+        excess = float(np.sum(post_horizon) - steady_mse * len(post_horizon)) if len(post_horizon) > 0 else float("nan")
+
+        row = {
             "switch_ordinal":      ordinal,
             "position":            int(s),
             "switches_in_context": switches_in_context,
             "spike_ratio":         spike,
             "recovery_time":       rec,
             "post_switch_mse":     post_mse,
-        })
+            "cumulative_excess_loss": excess,
+        }
+        for k in k_values:
+            row[f"post_switch_mse_k{k}"] = k_mse[k]
+
+        results.append(row)
 
     return results
+
+
+# ── Additional metrics for adaptation method evaluation ──────────────
+
+
+def post_switch_error_curve(
+    sq_err: np.ndarray,
+    states: np.ndarray,
+    k_values: List[int] = None,
+) -> Dict[int, float]:
+    """
+    Mean squared error at exactly k steps after each regime switch,
+    averaged across all switch events.
+    Returns {k: mean_sq_err_at_k} for each k in k_values.
+    """
+    if k_values is None:
+        k_values = [1, 5, 10, 20]
+    sq_err = np.asarray(sq_err, dtype=float)
+    states = np.asarray(states, dtype=int)
+    switch_pts = list(np.where(np.diff(states) != 0)[0] + 1)
+    if not switch_pts:
+        return {k: float("nan") for k in k_values}
+    n = len(sq_err)
+    result = {}
+    for k in k_values:
+        vals = [float(sq_err[s + k - 1]) for s in switch_pts if s + k - 1 < n]
+        result[k] = float(np.mean(vals)) if vals else float("nan")
+    return result
+
+
+def cumulative_excess_loss(
+    sq_err: np.ndarray,
+    states: np.ndarray,
+    horizon: int = 50,
+) -> float:
+    """
+    Total prediction penalty during adaptation, summed over `horizon` steps
+    after each switch and averaged across switch events.
+    Excess = sum(sq_err[t0:t0+horizon]) - steady_state_mse * horizon.
+    """
+    sq_err = np.asarray(sq_err, dtype=float)
+    states = np.asarray(states, dtype=int)
+    switch_pts = list(np.where(np.diff(states) != 0)[0] + 1)
+    if not switch_pts:
+        return float("nan")
+    n = len(sq_err)
+    near = np.zeros(n, dtype=bool)
+    for s in switch_pts:
+        near[max(0, s - 5):min(n, s + 10)] = True
+    steady_vals = sq_err[~near]
+    steady_mse = float(steady_vals.mean()) if len(steady_vals) > 0 else float(sq_err.mean())
+    excesses = []
+    for s in switch_pts:
+        post = sq_err[s:min(s + horizon, n)]
+        if len(post) > 0:
+            excesses.append(float(np.sum(post) - steady_mse * len(post)))
+    return float(np.mean(excesses)) if excesses else float("nan")
+
+
+def false_switch_rate(
+    fired_times: List[int],
+    true_switch_pts: List[int],
+    tolerance: int = 5,
+) -> float:
+    """
+    Fraction of CUSUM firings that are NOT within `tolerance` steps of
+    any true regime switch. A false alarm rate for the change detector.
+    Returns nan if no firings.
+    """
+    if not fired_times:
+        return float("nan")
+    true_set = set(true_switch_pts)
+    false_alarms = 0
+    for f in fired_times:
+        near_any = any(abs(f - s) <= tolerance for s in true_set)
+        if not near_any:
+            false_alarms += 1
+    return float(false_alarms) / len(fired_times)
