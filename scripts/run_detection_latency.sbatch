@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=gpu
+#SBATCH --partition=mit_normal_gpu
 
 cd ~/switch-transformers
 source activate transformer_env 2>/dev/null || conda activate transformer_env 2>/dev/null || true
