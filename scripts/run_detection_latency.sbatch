@@ -1,17 +1,22 @@
-#!/bin/bash
-#SBATCH --job-name=detect_latency
-#SBATCH --output=slurm_detect_latency_%j.out
-#SBATCH --error=slurm_detect_latency_%j.err
-#SBATCH --time=01:00:00
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#!/bin/bash -l
+#SBATCH -J detect_latency
+#SBATCH -p mit_normal_gpu
 #SBATCH --gres=gpu:1
-#SBATCH --partition=mit_normal_gpu
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH -t 02:00:00
+#SBATCH -o logs/%x_%j.out
+#SBATCH -e logs/%x_%j.err
 
-cd ~/switch-transformers
-source activate transformer_env 2>/dev/null || conda activate transformer_env 2>/dev/null || true
+set -euo pipefail
+cd "${SLURM_SUBMIT_DIR}"
+mkdir -p logs
+
+source /home/lizthorn/miniforge3/etc/profile.d/conda.sh
+conda activate switchgpu
+
+echo "=== Environment ==="
+python -c "import torch; print('cuda:', torch.cuda.is_available(), '| devices:', torch.cuda.device_count())"
 
 python run_detection_latency.py \
     --data_dir generated_data \
