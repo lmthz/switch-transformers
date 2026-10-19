@@ -6,13 +6,17 @@ Three-way detection latency comparison for each regime switch event:
   2. CUSUM on transformer residuals      -> cusum_residual_delay
   3. Linear probe on hidden states       -> probe_delay
 
-Also evaluates:
-  4. CUSUM-gated context reset           -> context reset RMSE / recovery time
-  5. RLS adaptive head (3 variants)      -> RLS RMSE / recovery time
+Also evaluates (all using the same trained model):
+  4. Base transformer                    -> results_base.csv
+  5. CUSUM-gated context reset           -> results_context_reset.csv
+  6. RLS adaptive head (3 variants)      -> results_rls.csv
 
-All methods use the same trained model (no retraining).
+All four evaluation passes share the same model checkpoint so comparisons
+between base, context reset, and RLS are valid.
+
 Outputs:
-  results_detection_latency.csv   — per-switch delays for all three methods
+  results_detection_latency.csv   — per-switch delays for all three detectors
+  results_base.csv                — base transformer per-switch metrics (the comparison baseline)
   results_context_reset.csv       — per-switch metrics for context reset
   results_rls.csv                 — per-switch metrics for RLS variants
 
@@ -217,6 +221,105 @@ def run_detection_latency_suite(
     return pd.DataFrame(rows)
 
 
+def eval_series_base(
+    model,
+    npz_path: str,
+    context_len: int,
+    val_frac: float,
+    device,
+    dataset_name: str = "",
+    instance: int = 0,
+) -> dict:
+    """
+    Run the plain frozen transformer on one .npz series and return per-switch
+    metrics in the same format as eval_series_rls / eval_series_context_reset.
+    This is the same-model baseline for the adaptation method comparison.
+    """
+    from metrics import (
+        train_val_split_indices, post_switch_spike_ratio, recovery_time,
+        per_switch_metrics, cumulative_excess_loss,
+    )
+
+    data = np.load(npz_path)
+    y_full = data["y"].astype(np.float32).flatten()
+    states_full = data["states"].astype(int).flatten()
+    n_total = len(y_full)
+    n_train, _ = train_val_split_indices(n_total, val_frac)
+    y_val = y_full[n_train:]
+    states_val = states_full[n_train:]
+    n = len(y_val)
+
+    if n < 2:
+        return {}
+
+    model.eval()
+    buffer = list(y_full[:n_train].astype(float))
+    preds = []
+    with torch.no_grad():
+        for t in range(n):
+            ctx = np.array(buffer[-context_len:], dtype=np.float32).reshape(1, -1, 1)
+            x = torch.tensor(ctx, device=device)
+            y_hat = float(model.predict_next(x)[0, 0].cpu())
+            preds.append(y_hat)
+            buffer.append(float(y_val[t]))
+
+    preds_arr = np.array(preds, dtype=float)
+    sq_err = (y_val.astype(float) - preds_arr) ** 2
+
+    rmse = float(np.sqrt(sq_err.mean()))
+    spike = post_switch_spike_ratio(sq_err, states_val)
+    rec = recovery_time(sq_err, states_val)
+    cel = cumulative_excess_loss(sq_err, states_val)
+    per_sw = per_switch_metrics(sq_err, states_val, context_len=context_len)
+
+    return {
+        "dataset":                dataset_name,
+        "instance":               instance,
+        "variant":                "base",
+        "rmse":                   rmse,
+        "spike_ratio":            spike,
+        "recovery_time":          rec,
+        "cumulative_excess_loss": cel,
+        "per_switch":             per_sw,
+    }
+
+
+def eval_suite_base(
+    model,
+    data_dir: str,
+    datasets: List[str],
+    n_instances: int,
+    context_len: int,
+    val_frac: float,
+    device,
+    out_csv: str = "results_base.csv",
+) -> "pd.DataFrame":
+    """
+    Evaluate the plain base transformer across all datasets and instances.
+    Saves one row per switch event to out_csv in the same format as results_rls.csv.
+    """
+    rows = []
+    for ds in datasets:
+        for ri in range(n_instances):
+            npz_path = str(Path(data_dir) / f"{ds}_r{ri}.npz")
+            if not Path(npz_path).exists():
+                continue
+            result = eval_series_base(
+                model, npz_path, context_len, val_frac, device,
+                dataset_name=ds, instance=ri,
+            )
+            if result:
+                per_sw = result.pop("per_switch", [])
+                for sw in per_sw:
+                    rows.append({**result, **sw})
+        print(f"  {ds}: done")
+
+    df = pd.DataFrame(rows)
+    df.to_csv(out_csv, index=False)
+    print(f"Saved {len(df)} per-switch rows to {out_csv}")
+    return df
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data_dir",    default="generated_data")
@@ -226,6 +329,7 @@ def main():
     ap.add_argument("--pool_path",   default=None)
     ap.add_argument("--cusum_threshold", type=float, default=5.0)
     ap.add_argument("--cusum_drift",     type=float, default=0.5)
+    ap.add_argument("--base_csv",         default="results_base.csv")
     ap.add_argument("--latency_csv",     default="results_detection_latency.csv")
     ap.add_argument("--reset_csv",       default="results_context_reset.csv")
     ap.add_argument("--rls_csv",         default="results_rls.csv")
@@ -249,6 +353,14 @@ def main():
     val_loader = get_val_monitor_loader(args.data_dir, context_len, val_frac, batch_size)
     train_iid(model, sampler, val_loader, args.train_steps, batch_size, lr, device)
     print("Training done.\n")
+
+    # ── 0. Base transformer (same-model baseline) ────────────────
+    print("Running base transformer evaluation...")
+    eval_suite_base(
+        model, args.data_dir, DATASETS_B1, args.n_instances,
+        context_len, val_frac, device,
+        out_csv=args.base_csv,
+    )
 
     # ── 1. Detection latency three-way comparison ─────────────────
     print("Running detection latency analysis...")
@@ -304,6 +416,7 @@ def main():
     print(f"Saved {len(rls_df)} rows to {args.rls_csv}")
 
     print("\n=== Complete ===")
+    print(f"  {args.base_csv}     — base transformer (same-model baseline)")
     print(f"  {args.latency_csv}  — detection latency three-way comparison")
     print(f"  {args.reset_csv}    — CUSUM context reset per-switch metrics")
     print(f"  {args.rls_csv}      — RLS adaptive head per-switch metrics")

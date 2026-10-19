@@ -26,6 +26,7 @@ python run_detection_latency.py \
     --pool_path series_pool.npz \
     --cusum_threshold 5.0 \
     --cusum_drift 0.5 \
+    --base_csv results_base.csv \
     --latency_csv results_detection_latency.csv \
     --reset_csv results_context_reset.csv \
     --rls_csv results_rls.csv \
