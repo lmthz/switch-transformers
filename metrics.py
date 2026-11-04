@@ -408,3 +408,148 @@ def false_switch_rate(
         if not near_any:
             false_alarms += 1
     return float(false_alarms) / len(fired_times)
+
+
+# ---------------------------------------------------------------------------
+# Detection-speed metrics (used in detection experiment)
+# ---------------------------------------------------------------------------
+
+def detection_events(
+    fired_times: List[int],
+    switch_positions: List[int],
+    tolerance: int = 5,
+    max_delay: int = 50,
+) -> List[dict]:
+    """
+    For each true switch, find the earliest fire within [switch, switch+max_delay].
+    Returns one dict per switch:
+      {switch_pos, fire_pos, latency, detected}
+    detected=True iff a fire was found within `tolerance` steps.
+    latency=max_delay when no fire is found.
+    """
+    fired_sorted = sorted(fired_times)
+    events = []
+    for s in switch_positions:
+        fire_pos = None
+        for f in fired_sorted:
+            if f >= s and f <= s + max_delay:
+                fire_pos = f
+                break
+        if fire_pos is None:
+            events.append({"switch_pos": s, "fire_pos": None,
+                           "latency": max_delay, "detected": False})
+        else:
+            latency = fire_pos - s
+            events.append({"switch_pos": s, "fire_pos": fire_pos,
+                           "latency": latency, "detected": latency <= tolerance})
+    return events
+
+
+def mean_detection_latency(events: List[dict]) -> float:
+    """Mean latency across all switch events (undetected events score max_delay)."""
+    if not events:
+        return float("nan")
+    return float(np.mean([e["latency"] for e in events]))
+
+
+def false_alarm_rate_per100(
+    fired_times: List[int],
+    switch_positions: List[int],
+    n_steps: int,
+    tolerance: int = 5,
+) -> float:
+    """
+    Number of fires more than `tolerance` steps from any true switch,
+    expressed as a rate per 100 timesteps.
+    """
+    if not fired_times or n_steps == 0:
+        return 0.0
+    near_set = set()
+    for s in switch_positions:
+        for d in range(-tolerance, tolerance + 1):
+            near_set.add(s + d)
+    false_alarms = sum(1 for f in fired_times if f not in near_set)
+    return float(false_alarms) / n_steps * 100.0
+
+
+def arl0(
+    fired_times: List[int],
+    switch_positions: List[int],
+    n_steps: int,
+    tolerance: int = 5,
+) -> float:
+    """
+    Average run length between consecutive false alarms.
+    Returns inf if zero false alarms.
+    """
+    near_set = set()
+    for s in switch_positions:
+        for d in range(-tolerance, tolerance + 1):
+            near_set.add(s + d)
+    false_alarm_times = sorted(f for f in fired_times if f not in near_set)
+    if len(false_alarm_times) == 0:
+        return float("inf")
+    if len(false_alarm_times) == 1:
+        return float(n_steps)
+    gaps = [false_alarm_times[i + 1] - false_alarm_times[i]
+            for i in range(len(false_alarm_times) - 1)]
+    return float(np.mean(gaps))
+
+
+def f1_at_tolerance(
+    fired_times: List[int],
+    switch_positions: List[int],
+    tolerance: int = 5,
+) -> float:
+    """
+    F1 score for switch detection at given tolerance.
+    TP: switch with a fire within tolerance steps.
+    FP: fire not within tolerance of any switch.
+    FN: switch with no fire within tolerance steps.
+    """
+    if not switch_positions and not fired_times:
+        return float("nan")
+    near_set = set()
+    for s in switch_positions:
+        for d in range(-tolerance, tolerance + 1):
+            near_set.add(s + d)
+
+    tp = sum(1 for s in switch_positions
+             if any(abs(f - s) <= tolerance for f in fired_times))
+    fp = sum(1 for f in fired_times if f not in near_set)
+    fn = len(switch_positions) - tp
+
+    denom = 2 * tp + fp + fn
+    return float(2 * tp / denom) if denom > 0 else float("nan")
+
+
+def detection_roc(
+    scores: np.ndarray,
+    switch_positions: List[int],
+    n_steps: int,
+    thresholds,
+    tolerance: int = 5,
+    max_delay: int = 50,
+) -> List[dict]:
+    """
+    Sweep thresholds on a per-timestep score array; fire when score >= threshold.
+    Returns [{threshold, mean_latency, far_per100, f1}] for each threshold.
+    """
+    results = []
+    for thresh in thresholds:
+        fired = [int(t) for t in np.where(scores >= thresh)[0]]
+        # Suppress consecutive fires: keep only first fire in each run
+        deduplicated: List[int] = []
+        last_fire = -999
+        for f in fired:
+            if f - last_fire > tolerance:
+                deduplicated.append(f)
+                last_fire = f
+        events = detection_events(deduplicated, switch_positions, tolerance, max_delay)
+        results.append({
+            "threshold": float(thresh),
+            "mean_latency": mean_detection_latency(events),
+            "far_per100": false_alarm_rate_per100(deduplicated, switch_positions, n_steps, tolerance),
+            "f1": f1_at_tolerance(deduplicated, switch_positions, tolerance),
+        })
+    return results
