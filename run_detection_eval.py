@@ -67,12 +67,12 @@ THRESHOLDS_PROB = np.linspace(0.05, 0.95, 19)
 # CUSUM outputs cumulative sum statistic (non-negative, units of std-devs²)
 THRESHOLDS_CUSUM = np.concatenate([
     np.linspace(0.1, 2.0, 10),
-    np.linspace(2.0, 10.0, 10),
+    np.linspace(2.0, 10.0, 10)[1:],
 ])
 # BOCPD outputs -log P(x_t | x_{1:t-1}); typical background ≈1–2, spikes ≈3–10
 THRESHOLDS_BOCPD = np.concatenate([
     np.linspace(0.5, 3.0, 10),
-    np.linspace(3.0, 8.0, 10),
+    np.linspace(3.0, 8.0, 10)[1:],
 ])
 
 # ── Data loading helpers ───────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ def scores_cusum(
 
 
 def scores_bocpd(y_val: np.ndarray, hazard_lambda: float = 100.0) -> np.ndarray:
-    """Return BOCPD per-step P(r_t=0)."""
+    """Return per-step -log P(x_t | x_{1:t-1}): high after switches, low during stable segments."""
     return bocpd_score_series(y_val, hazard_lambda=hazard_lambda)
 
 
@@ -215,12 +215,8 @@ def scores_comparison_transformer(
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
-    # Standardise using saved train stats
-    stdzr_mean = ckpt.get("stdzr_mean", 0.0)
-    stdzr_std  = ckpt.get("stdzr_std",  1.0)
-    y_std = (y_val - stdzr_mean) / (stdzr_std + 1e-8)
-
-    T = len(y_std)
+    # y_val is already standardised by load_val_split — use it directly
+    T = len(y_val)
     scores = np.zeros(T, dtype=np.float64)
 
     with torch.no_grad():
@@ -290,10 +286,11 @@ def eval_dataset(
     context_len: int,
     val_frac: float,
     device,
+    instance: int = 0,
     cusum_drift: float = 0.5,
     bocpd_lambda: float = 100.0,
 ) -> List[Dict[str, Any]]:
-    npz_path = str(Path(data_dir) / f"{dataset}.npz")
+    npz_path = str(Path(data_dir) / f"{dataset}_r{instance}.npz")
     if not os.path.exists(npz_path):
         print(f"  [skip] {dataset} — npz not found")
         return []
@@ -365,6 +362,8 @@ def main():
     ap.add_argument("--methods",   nargs="+", default=["all"],
                     help="Methods: cusum bocpd probe det_only multitask (or 'all')")
     ap.add_argument("--data_dir",  type=str, default="generated_data")
+    ap.add_argument("--instance",  type=int, default=0,
+                    help="Dataset instance suffix (default 0 → uses <dataset>_r0.npz)")
     ap.add_argument("--out",       type=str, default="results_detection_eval.csv")
 
     ap.add_argument("--det_only_ckpt_dir",  type=str,
@@ -416,6 +415,7 @@ def main():
             context_len=args.context_len,
             val_frac=args.val_frac,
             device=device,
+            instance=args.instance,
             cusum_drift=args.cusum_drift,
             bocpd_lambda=args.bocpd_lambda,
         )

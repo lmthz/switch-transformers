@@ -283,6 +283,8 @@ def main():
                     choices=["detection_only", "multitask"],
                     help="Loss variant: detection_only or multitask")
     ap.add_argument("--data_dir",  type=str, default="generated_data")
+    ap.add_argument("--instance",  type=int, default=0,
+                    help="Dataset instance suffix (default 0 → uses <dataset>_r0.npz)")
     ap.add_argument("--ckpt_dir",  type=str, default=None,
                     help="Checkpoint directory (default: runs/detection_<variant>)")
 
@@ -348,7 +350,7 @@ def main():
           f"variant={args.variant}  device={args.device}  steps={args.steps}")
 
     for ds in datasets:
-        npz_path = str(Path(args.data_dir) / f"{ds}.npz")
+        npz_path = str(Path(args.data_dir) / f"{ds}_r{args.instance}.npz")
         train_one(npz_path=npz_path, dataset=ds, **train_kwargs)
 
     print("Done.")
