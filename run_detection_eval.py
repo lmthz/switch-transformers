@@ -221,7 +221,7 @@ def scores_comparison_transformer(
 
     with torch.no_grad():
         for t in range(context_len, T):
-            ctx = y_std[t - context_len : t].reshape(1, -1, 1)
+            ctx = y_val[t - context_len : t].reshape(1, -1, 1)
             x   = torch.tensor(ctx, dtype=torch.float32, device=device)
             score = model.detection_score(x)   # (1, 1)
             scores[t] = float(score[0, 0].cpu())
