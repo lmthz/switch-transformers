@@ -59,7 +59,7 @@ DATASETS = [
     "S1_sparse_switching","S2_frequent_switching",
 ]
 
-ALL_METHODS = ["cusum", "bocpd", "probe", "det_only", "multitask"]
+ALL_METHODS = ["cusum", "bocpd", "probe", "det_only", "multitask", "transformer_bocpd"]
 
 # Threshold sweep grids (different scales for different method families)
 # Neural/probe methods output sigmoid in [0,1]
@@ -146,7 +146,9 @@ def scores_probe(
     ckpt = torch.load(base_path, map_location=device)
     cfg  = TransformerConfig(**ckpt["cfg"])
     base_model = CausalTransformerForecaster(cfg).to(device)
-    base_model.load_state_dict(ckpt["model_state"])
+    # strict=False lets us reuse ComparisonDetectionTransformer checkpoints:
+    # the detection_head keys are simply ignored when loading into the base class
+    base_model.load_state_dict(ckpt["model_state"], strict=False)
     base_model.eval()
 
     T = len(y_val)
@@ -196,6 +198,48 @@ def scores_probe(
 
     scores[context_len:] = probs
     return scores
+
+
+def scores_transformer_residual(
+    y_val: np.ndarray,
+    context_len: int,
+    ckpt_path: str,
+    device,
+    hazard_lambda: float = 100.0,
+) -> np.ndarray | None:
+    """
+    Run BOCPD on transformer prediction residuals.
+
+    Within a stable regime the multitask backbone predicts accurately →
+    residuals are small white-noise.  After a switch the backbone predicts
+    the wrong regime → residuals spike → BOCPD fires earlier than on raw obs.
+
+    Uses the multitask checkpoint (trained with prediction loss) so the
+    backbone is a calibrated one-step forecaster.
+    """
+    if not os.path.exists(ckpt_path):
+        return None
+
+    ckpt    = torch.load(ckpt_path, map_location=device)
+    cfg     = TransformerConfig(**ckpt["cfg"])
+    split_k = ckpt.get("split_k", 8)
+    model   = ComparisonDetectionTransformer(cfg, split_k=split_k).to(device)
+    model.load_state_dict(ckpt["model_state"])
+    model.eval()
+
+    T         = len(y_val)
+    residuals = np.zeros(T, dtype=np.float64)
+
+    with torch.no_grad():
+        for t in range(context_len, T):
+            ctx = y_val[t - context_len : t].reshape(1, -1, 1)
+            x   = torch.tensor(ctx, dtype=torch.float32, device=device)
+            pred, _ = model.forward_detection(x)
+            # pred shape (1, L, 1); position -1 predicts the next step (y_val[t])
+            pred_next      = float(pred[0, -1, 0].cpu())
+            residuals[t]   = float(y_val[t]) - pred_next
+
+    return bocpd_score_series(residuals, hazard_lambda=hazard_lambda)
 
 
 def scores_comparison_transformer(
@@ -332,6 +376,13 @@ def eval_dataset(
             scores = scores_comparison_transformer(y_val, context_len, ckpt_path, device)
             thresholds = THRESHOLDS_PROB
 
+        elif method == "transformer_bocpd":
+            ckpt_path = str(Path(multitask_ckpt_dir) / f"{dataset}_final.pt")
+            scores = scores_transformer_residual(
+                y_val, context_len, ckpt_path, device, hazard_lambda=bocpd_lambda
+            )
+            thresholds = THRESHOLDS_BOCPD
+
         if scores is None:
             print(f"  [skip] {dataset}/{method} — model/scores not available")
             continue
@@ -371,8 +422,9 @@ def main():
     ap.add_argument("--multitask_ckpt_dir", type=str,
                     default="runs/detection_multitask")
     ap.add_argument("--base_ckpt_dir",      type=str,
-                    default="runs/base_transformer",
-                    help="Base transformer checkpoints for linear probe")
+                    default="runs/detection_multitask",
+                    help="Checkpoint dir for linear probe backbone (multitask checkpoints "
+                         "work via strict=False loading)")
 
     ap.add_argument("--context_len",   type=int,   default=64)
     ap.add_argument("--val_frac",      type=float, default=0.3)

@@ -29,7 +29,7 @@ python run_detection_eval.py \
     --data_dir generated_data \
     --det_only_ckpt_dir runs/detection_detection_only \
     --multitask_ckpt_dir runs/detection_multitask \
-    --base_ckpt_dir runs/base_transformer \
+    --base_ckpt_dir runs/detection_multitask \
     --context_len 64 \
     --val_frac 0.3 \
     --cusum_drift 0.5 \
