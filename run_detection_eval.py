@@ -164,8 +164,8 @@ def scores_probe(
         for t in range(context_len, T):
             ctx = y_val[t - context_len : t].reshape(1, -1, 1)
             x   = torch.tensor(ctx, dtype=torch.float32, device=device)
-            h   = base_model.get_hidden(x)                # (1, L, d)
-            feat = h[0, -1, :].cpu().numpy()              # (d,)
+            h   = base_model.get_hidden(x)                # (1, d)
+            feat = h[0, :].cpu().numpy()                  # (d,)
             hidden_list.append(feat)
             # label: switch in recent 5 steps?
             lbl = int(any((t - k) in switch_set for k in range(1, 6)))
