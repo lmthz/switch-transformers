@@ -216,7 +216,7 @@ def train_one(
 
     train_loader = DataLoader(
         RegimeDataset(train_x, train_y),
-        batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0,
+        batch_size=batch_size, shuffle=True, drop_last=False, num_workers=0,
     )
 
     start_step = 0
