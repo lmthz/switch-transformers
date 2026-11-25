@@ -41,7 +41,7 @@ from tqdm import tqdm
 
 from models.transformer_forecaster import TransformerConfig
 from models.detection_transformer import ComparisonDetectionTransformer
-from data.detection_dataset import make_detection_datasets
+from data.detection_dataset import make_detection_datasets, PoolDetectionDataset
 
 # ── Dataset list ───────────────────────────────────────────────────────────────
 
@@ -268,6 +268,117 @@ def train_one(
             "val_det_loss": final_val, "val_hit_rate": metrics["val_hit_rate"]}
 
 
+# ── Pool training ──────────────────────────────────────────────────────────────
+
+def train_on_pool(
+    pool_path: str,
+    ckpt_dir: str,
+    variant: str,
+    context_len: int,
+    steps: int,
+    batch_size: int,
+    lr: float,
+    save_every: int,
+    device: torch.device,
+    d_model: int = 128,
+    n_heads: int = 4,
+    n_layers: int = 4,
+    dropout: float = 0.1,
+    split_k: int = 8,
+    det_weight: float = DET_WEIGHT,
+    alpha: float = 0.15,
+) -> None:
+    """
+    Train a single global ComparisonDetectionTransformer on the switch pool.
+
+    Unlike train_one() which trains one model per dataset, this trains one
+    model on the entire pool of diverse synthetic single-switch AR series.
+    Saves checkpoint to {ckpt_dir}/pool_detector_final.pt.
+    """
+    final_path = str(Path(ckpt_dir) / "pool_detector_final.pt")
+    ckpt_path  = str(Path(ckpt_dir) / "pool_detector_ckpt.pt")
+
+    if os.path.exists(final_path):
+        print(f"[skip] pool_detector — final model exists at {final_path}")
+        return
+
+    print(f"[pool] Loading pool from {pool_path} ...")
+    dataset = PoolDetectionDataset(pool_path, context_len=context_len, alpha=alpha)
+    print(f"[pool] {dataset.N:,} series × {dataset._wpb} windows = "
+          f"{len(dataset):,} total items")
+
+    loader = DataLoader(
+        dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0,
+    )
+
+    cfg   = TransformerConfig(context_len=context_len, d_model=d_model,
+                               n_heads=n_heads, n_layers=n_layers, dropout=dropout)
+    model = ComparisonDetectionTransformer(cfg, split_k=split_k).to(device)
+    opt   = torch.optim.AdamW(model.parameters(), lr=lr)
+    loss_fn = nn.MSELoss()
+
+    start_step = 0
+    if os.path.exists(ckpt_path):
+        start_step, _ = _load_checkpoint(ckpt_path, model, opt, device)
+        print(f"[pool] Resuming from step {start_step}")
+    else:
+        print(f"[pool] Training from scratch  variant={variant}  steps={steps}")
+
+    model.train()
+    it   = iter(loader)
+    pbar = tqdm(range(start_step, steps), desc="pool_detector", leave=True)
+
+    for step in pbar:
+        try:
+            x, y, det = next(it)
+        except StopIteration:
+            it = iter(loader)
+            x, y, det = next(it)
+
+        x   = x.to(device)
+        y   = y.to(device)
+        det = det.to(device)
+
+        y_seq = torch.cat([x[:, 1:, :], y.unsqueeze(1)], dim=1)   # (B, L, 1)
+
+        opt.zero_grad(set_to_none=True)
+        pred, score = model.forward_detection(x)
+        score_sig   = torch.sigmoid(score).squeeze(-1)             # (B,)
+
+        loss_det = loss_fn(score_sig, det)
+        if variant == "multitask":
+            loss_pred = loss_fn(pred, y_seq)
+            loss = loss_pred + det_weight * loss_det
+        else:
+            loss = loss_det
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        opt.step()
+
+        if (step + 1) % 500 == 0:
+            pbar.set_postfix(loss=f"{loss.item():.4f}",
+                             det=f"{loss_det.item():.4f}")
+
+        if (step + 1) % save_every == 0:
+            _save_checkpoint(ckpt_path, model, opt, step + 1, float("inf"))
+
+    torch.save({
+        "model_state": model.state_dict(),
+        "cfg":         cfg.__dict__,
+        "split_k":     split_k,
+        "variant":     variant,
+        "alpha":       alpha,
+        "pool_path":   pool_path,
+        "steps":       steps,
+    }, final_path)
+
+    if os.path.exists(ckpt_path):
+        os.remove(ckpt_path)
+
+    print(f"[pool] Saved to {final_path}")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -278,6 +389,8 @@ def main():
                      help="Single dataset name (e.g. A1_ar2_coeffs_easy)")
     tgt.add_argument("--all_datasets", action="store_true",
                      help="Train on all datasets in DATASETS list")
+    tgt.add_argument("--pool_path",    type=str,
+                     help="Path to switch_pool.npz — trains one global model on pool")
 
     ap.add_argument("--variant",   type=str, default="multitask",
                     choices=["detection_only", "multitask"],
@@ -320,38 +433,76 @@ def main():
     ckpt_dir = args.ckpt_dir or f"runs/detection_{args.variant}"
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    if args.all_datasets:
+    if args.pool_path is not None:
+        # Pool training: one global model on the synthetic switch pool
+        print(f"Pool training  |  pool={args.pool_path}  "
+              f"variant={args.variant}  device={args.device}  steps={args.steps}")
+        train_on_pool(
+            pool_path=args.pool_path,
+            ckpt_dir=ckpt_dir,
+            variant=args.variant,
+            context_len=args.context_len,
+            steps=args.steps,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            save_every=args.save_every,
+            device=device,
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            dropout=args.dropout,
+            split_k=args.split_k,
+            det_weight=args.det_weight,
+            alpha=args.alpha,
+        )
+    elif args.all_datasets:
         datasets = DATASETS
+        train_kwargs = dict(
+            ckpt_dir=ckpt_dir,
+            variant=args.variant,
+            context_len=args.context_len,
+            val_frac=args.val_frac,
+            steps=args.steps,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            save_every=args.save_every,
+            device=device,
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            dropout=args.dropout,
+            split_k=args.split_k,
+            det_weight=args.det_weight,
+            alpha=args.alpha,
+        )
+        print(f"Training {len(datasets)} dataset(s)  |  "
+              f"variant={args.variant}  device={args.device}  steps={args.steps}")
+        for ds in datasets:
+            npz_path = str(Path(args.data_dir) / f"{ds}_r{args.instance}.npz")
+            train_one(npz_path=npz_path, dataset=ds, **train_kwargs)
     elif args.dataset is not None:
-        datasets = [args.dataset]
+        train_kwargs = dict(
+            ckpt_dir=ckpt_dir,
+            variant=args.variant,
+            context_len=args.context_len,
+            val_frac=args.val_frac,
+            steps=args.steps,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            save_every=args.save_every,
+            device=device,
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            dropout=args.dropout,
+            split_k=args.split_k,
+            det_weight=args.det_weight,
+            alpha=args.alpha,
+        )
+        npz_path = str(Path(args.data_dir) / f"{args.dataset}_r{args.instance}.npz")
+        train_one(npz_path=npz_path, dataset=args.dataset, **train_kwargs)
     else:
-        ap.error("Supply --dataset <name> or --all_datasets")
-
-    train_kwargs = dict(
-        ckpt_dir=ckpt_dir,
-        variant=args.variant,
-        context_len=args.context_len,
-        val_frac=args.val_frac,
-        steps=args.steps,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        save_every=args.save_every,
-        device=device,
-        d_model=args.d_model,
-        n_heads=args.n_heads,
-        n_layers=args.n_layers,
-        dropout=args.dropout,
-        split_k=args.split_k,
-        det_weight=args.det_weight,
-        alpha=args.alpha,
-    )
-
-    print(f"Training {len(datasets)} dataset(s)  |  "
-          f"variant={args.variant}  device={args.device}  steps={args.steps}")
-
-    for ds in datasets:
-        npz_path = str(Path(args.data_dir) / f"{ds}_r{args.instance}.npz")
-        train_one(npz_path=npz_path, dataset=ds, **train_kwargs)
+        ap.error("Supply --dataset <name>, --all_datasets, or --pool_path <path>")
 
     print("Done.")
 

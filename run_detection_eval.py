@@ -59,7 +59,8 @@ DATASETS = [
     "S1_sparse_switching","S2_frequent_switching",
 ]
 
-ALL_METHODS = ["cusum", "bocpd", "probe", "det_only", "multitask", "transformer_bocpd"]
+ALL_METHODS = ["cusum", "bocpd", "probe", "det_only", "multitask", "transformer_bocpd",
+               "pool_detector"]
 
 # Threshold sweep grids (different scales for different method families)
 # Neural/probe methods output sigmoid in [0,1]
@@ -333,8 +334,12 @@ def eval_dataset(
     instance: int = 0,
     cusum_drift: float = 0.5,
     bocpd_lambda: float = 100.0,
+    pool_ckpt_path: str = "",
 ) -> List[Dict[str, Any]]:
     npz_path = str(Path(data_dir) / f"{dataset}_r{instance}.npz")
+    if not os.path.exists(npz_path):
+        # Fallback: try without instance suffix (matches benchmark NPZ naming)
+        npz_path = str(Path(data_dir) / f"{dataset}.npz")
     if not os.path.exists(npz_path):
         print(f"  [skip] {dataset} — npz not found")
         return []
@@ -383,6 +388,15 @@ def eval_dataset(
             )
             thresholds = THRESHOLDS_BOCPD
 
+        elif method == "pool_detector":
+            if not pool_ckpt_path:
+                print(f"  [skip] {dataset}/pool_detector — no --pool_ckpt provided")
+                continue
+            scores = scores_comparison_transformer(
+                y_val, context_len, pool_ckpt_path, device,
+            )
+            thresholds = THRESHOLDS_PROB
+
         if scores is None:
             print(f"  [skip] {dataset}/{method} — model/scores not available")
             continue
@@ -425,6 +439,8 @@ def main():
                     default="runs/detection_multitask",
                     help="Checkpoint dir for linear probe backbone (multitask checkpoints "
                          "work via strict=False loading)")
+    ap.add_argument("--pool_ckpt",          type=str, default="",
+                    help="Path to pool_detector_final.pt (single global checkpoint)")
 
     ap.add_argument("--context_len",   type=int,   default=64)
     ap.add_argument("--val_frac",      type=float, default=0.3)
@@ -470,6 +486,7 @@ def main():
             instance=args.instance,
             cusum_drift=args.cusum_drift,
             bocpd_lambda=args.bocpd_lambda,
+            pool_ckpt_path=args.pool_ckpt,
         )
 
         all_rows.extend(rows)

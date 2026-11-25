@@ -13,6 +13,7 @@ Returns (x, y, detection_target) where:
 """
 from __future__ import annotations
 
+import math
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -78,6 +79,59 @@ class SwitchDetectionDataset(Dataset):
         y = torch.tensor([tgt], dtype=torch.float32)     # (1,)
         det = torch.tensor(self._targets[t], dtype=torch.float32)  # scalar
         return x, y, det
+
+
+class PoolDetectionDataset(Dataset):
+    """
+    Dataset built from a single-switch AR pool NPZ (produced by generate_switch_pool.py).
+
+    Pool NPZ keys:
+        series       : (N, T) float32 — per-row standardised series
+        switch_times : (N,)   int32   — switch time index in [0, T)
+
+    Each item is a window of length context_len ending at timestep t, with:
+        x   : (context_len, 1) float32 — context window
+        y   : (1,) float32            — next-step target
+        det : () float32              — soft detection label:
+                                         exp(-alpha * (t - tau)) if t > tau else 0.0
+
+    Parameters
+    ----------
+    pool_path    : path to the pool NPZ file
+    context_len  : window length (must be < T)
+    alpha        : soft-label decay rate (default 0.15 — wider alarm window than
+                   the per-dataset default of 0.5, since the pool series are longer)
+    """
+
+    def __init__(self, pool_path: str, context_len: int, alpha: float = 0.15):
+        data = np.load(pool_path)
+        self._series = data["series"]                            # (N, T) float32
+        self._tau    = data["switch_times"].astype(np.int64)    # (N,)
+        self.L = context_len
+        self.alpha = alpha
+
+        self.N, self.T = self._series.shape
+        self._wpb = self.T - self.L  # windows per series (target t in [L, T))
+        if self._wpb <= 0:
+            raise ValueError(f"series_len={self.T} is too short for context_len={self.L}")
+
+    def __len__(self) -> int:
+        return self.N * self._wpb
+
+    def __getitem__(self, i: int):
+        s   = i // self._wpb                     # series index
+        t   = self.L + (i % self._wpb)           # target timestep in [L, T)
+        tau = int(self._tau[s])
+
+        ctx = self._series[s, t - self.L : t]   # (L,) float32
+        tgt = float(self._series[s, t])
+
+        det = 0.0 if t <= tau else math.exp(-self.alpha * (t - tau))
+
+        x = torch.from_numpy(ctx.copy()).unsqueeze(-1)       # (L, 1)
+        y = torch.tensor([tgt], dtype=torch.float32)          # (1,)
+        d = torch.tensor(det, dtype=torch.float32)            # scalar
+        return x, y, d
 
 
 def make_detection_datasets(
